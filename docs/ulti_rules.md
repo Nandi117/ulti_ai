@@ -1,40 +1,41 @@
-# Ulti - Official Game Rules Summary
+# Rablóulti - Official Game Rules & Full Bidding Table
 
-Ulti is a complex traditional Hungarian trick-taking card game for 3 players, played with a 32-card German-suited deck. It is highly strategic and involves an auction/bidding phase followed by the trick-taking phase.
+Rablóulti (Robber Ulti) is the most popular and complex variant of the traditional Hungarian trick-taking card game. It involves a massive bidding phase where players can declare complex combinations of contracts.
 
 ## 1. Core Concepts
 - **Players**: 3 players.
-- **Deck**: 32 cards (German/Hungarian suited: Acorns, Leaves, Hearts, Bells; ranks 7, 8, 9, 10, Under, Over, King, Ace).
-- **Direction**: Dealing, bidding, and play proceed counter-clockwise.
-- **Objective**: The declarer (winner of the auction) must fulfill their bid. Bids can range from taking specific tricks, winning the last trick with the 7 of trumps ("Ulti"), or avoiding all tricks.
+- **Deck**: 32-card German-suited deck.
+- **Direction**: Counter-clockwise.
 
-## 2. Setup & Dealing
-- **Dealing**: The dealer gives 10 cards each to two players and 12 cards to the player to their right (the starter).
-- **Talon**: The player with 12 cards sets aside two cards face down to form the *talon*.
+## 2. The Auction (Bidding)
+In Rablóulti, the bidding is highly combinatorial. A player can combine multiple basic contracts into a single bid. If a player bids, they can pick up the talon (2 cards) and discard 2 cards.
 
-## 3. The Auction (Bidding)
-- Players bid to become the declarer. 
-- If a player decides to bid, they pick up the talon, declare their contract (the game type), and then discard two cards face down to reform the talon.
-- Bids have varying point values. Common game types:
-  - **Party (Pass)**: A basic game, trumps are chosen, declarer must take more points than defenders combined.
-  - **Ulti**: Winning the final trick specifically with the 7 of trumps.
-  - **Betli**: A "misere" contract where the declarer must take *zero* tricks.
-  - **Durchmarsch**: The declarer must take *all* the tricks.
-- Defenders can say **Contra** (double the stakes) if they think the declarer will fail. The declarer can reply with **Rekontra** (redouble).
+### Basic Contracts:
+1. **Passz (Party)**: Simply taking more points than the defenders.
+2. **Ulti**: Winning the last (10th) trick with the 7 of trumps.
+3. **Betli**: A misere game (taking NO tricks).
+4. **Durchmars**: Taking ALL the tricks.
+5. **20-100 / 40-100**: Declaring that the player will reach 100 points via card values and "bélák" (King-Upper pairs of the same suit: 40 points in trump, 20 in other suits).
+6. **Négy ász**: Taking all four Aces.
 
-## 4. Gameplay (Trick-taking)
-- The declarer leads the first trick.
-- Players *must* follow suit if possible. If they cannot follow suit, they must play a trump card (if the game has trumps). 
-- If a player can neither follow suit nor play a trump, they can discard any card.
-- A trick is won by the highest trump, or if no trumps are played, the highest card of the led suit.
-- The winner of the trick leads the next trick.
+### Color Multipliers:
+- **Piros (Red/Hearts)**: If the trump suit is chosen as Hearts, the base value of the contract is doubled!
 
-## 5. Scoring
-- Points are awarded based on the contract, multipliers (Contra/Rekontra), and whether the declarer succeeded or failed.
+### Combinations & Values (Extracted from Wikipedia):
+The combinations scale immensely in points. Here is the structure of the most notable bids and their base points (which can double if the bid fails):
+- **Passz**: 1 point (Piros passz: 2 points)
+- **40-100**: 4 points (Piros 40-100: 8 points)
+- **Ulti**: 4+1 points (Piros ulti: 8+2 points)
+- **Betli**: 5 points (Piros betli: 10 points)
+- **Durchmars**: 6 points (Piros durchmars: 12 points)
+- **40-100 ulti**: 8 points (Piros 40-100 ulti: 16 points)
+- **20-100**: 8 points (Piros 20-100: 16 points)
+- **Ulti durchmars**: 10 points (Piros ulti durchmars: 20 points)
+- **20-100 ulti**: 12 points (Piros 20-100 ulti: 24 points)
+- **Terített (Open/Spread)**: Increases the value massively (e.g., Terített durchmars is 12 points, Piros terített durchmars is 24 points).
+- **Maximum Bid**: Piros 20-100 ulti terített durchmars (48 points).
 
-## Implementation Notes for RL Engine
-- **State Space**: Must represent player hands (3x10), the talon (2), current trump suit, bid history, trick history, and score.
-- **Action Space**: 
-  - Bidding phase: Declare a contract or pass. If declaring, select 2 cards to discard.
-  - Play phase: Select a valid card from hand to play. Action masking is strictly required to prevent illegal moves (must follow suit).
-- **Rewards**: Complex and delayed. Intermediate rewards may be needed, but ultimate reward is driven by the game score at the end of the hand.
+## 3. Implementation Planning for RL Agent
+Because of Rablóulti's combinatorial explosion of bids, our Action Space for the bidding phase must be carefully designed. 
+- **Bidding Action Space**: Instead of a flat discrete list of 50+ combinations, we may need a MultiDiscrete action space (e.g., `[Trump Suit, Base Game, Ulti Flag, 100 Flag, 4 Aces Flag, Spread Flag]`).
+- **Action Masking**: The mask must strictly enforce the hierarchy of bids. A player can only bid if the total point value of their bid is strictly greater than the previous bid!

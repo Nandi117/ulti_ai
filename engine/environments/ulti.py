@@ -33,6 +33,10 @@ class UltiEnv(gym.Env):
         self.deduction_flags = np.zeros(12, dtype=np.int8)
         self.trump_suit = None
         self.tricks_played = 0
+        self.declarer_tricks_won = 0
+        self.defenders_tricks_won = 0
+        self.declarer_points = 0
+        self.defenders_points = 0
 
     def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[dict, dict]:
         super().reset(seed=seed)
@@ -57,6 +61,10 @@ class UltiEnv(gym.Env):
         self.deduction_flags = np.zeros(12, dtype=np.int8)
         self.trump_suit = None
         self.tricks_played = 0
+        self.declarer_tricks_won = 0
+        self.defenders_tricks_won = 0
+        self.declarer_points = 0
+        self.defenders_points = 0
         
         return self._get_obs(), self._get_info()
 
@@ -134,14 +142,33 @@ class UltiEnv(gym.Env):
                 
             if len(self.trick.cards_played) == 3:
                 winner = self.trick.get_winner()
+                
+                trick_points = sum(10 for c in self.trick.cards_played if c.rank in [Rank.TEN, Rank.ACE])
+                if winner == self.auction.highest_bidder:
+                    self.declarer_tricks_won += 1
+                    self.declarer_points += trick_points
+                else:
+                    self.defenders_tricks_won += 1
+                    self.defenders_points += trick_points
+                
                 self.current_player = winner
                 self.trick = Trick(trump_suit=self.trump_suit)
                 self.tricks_played += 1
                 
                 if self.tricks_played == 10:
                     terminated = True
-                    # Terminal Reward Calculation (Placeholder)
-                    reward = 1.0
+                    if winner == self.auction.highest_bidder:
+                        self.declarer_points += 10
+                    else:
+                        self.defenders_points += 10
+                        
+                    bid = self.auction.highest_bid
+                    if bid.is_betli:
+                        reward = float(bid.points) if self.declarer_tricks_won == 0 else float(-bid.points)
+                    elif bid.is_durchmars:
+                        reward = float(bid.points) if self.declarer_tricks_won == 10 else float(-bid.points)
+                    else:
+                        reward = float(bid.points) if self.declarer_points > self.defenders_points else float(-bid.points)
             else:
                 self.current_player = (self.current_player + 1) % 3
 

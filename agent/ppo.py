@@ -4,6 +4,8 @@ from typing import Dict, Optional, Tuple, Union, Any
 from torch.distributions.categorical import Categorical
 from agent.symbolic.masking import masked_softmax
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 class PPOMultiHeadAgent(nn.Module):
     def __init__(self, obs_dim: int = 75, hidden_dim: int = 256, action_dim: int = 41) -> None:
         super(PPOMultiHeadAgent, self).__init__()
@@ -21,24 +23,28 @@ class PPOMultiHeadAgent(nn.Module):
         self.policy_betli = nn.Linear(hidden_dim, action_dim)
         self.policy_durchmars = nn.Linear(hidden_dim, action_dim)
         
-    def _preprocess(self, obs_dict: Dict[str, torch.Tensor], is_declarer: Union[float, int, torch.Tensor]) -> torch.Tensor:
-        hand = obs_dict["hand"].float()
-        trick_history = obs_dict["trick_history"].float()
-        deduction_flags = obs_dict["deduction_flags"].float()
+    def _preprocess(self, obs_dict: Dict[str, Any], is_declarer: Union[float, int, torch.Tensor]) -> torch.Tensor:
+        hand = torch.as_tensor(obs_dict["hand"], dtype=torch.float32, device=device)
+        trick_history = torch.as_tensor(obs_dict["trick_history"], dtype=torch.float32, device=device)
+        deduction_flags = torch.as_tensor(obs_dict["deduction_flags"], dtype=torch.float32, device=device)
         
         if hand.dim() == 1:
             hand = hand.unsqueeze(0)
             trick_history = trick_history.unsqueeze(0)
             deduction_flags = deduction_flags.unsqueeze(0)
             if not isinstance(is_declarer, torch.Tensor):
-                is_declarer = torch.tensor([is_declarer], dtype=torch.float32).unsqueeze(0)
+                is_declarer = torch.tensor([is_declarer], dtype=torch.float32, device=device).unsqueeze(0)
             elif is_declarer.dim() == 1:
-                is_declarer = is_declarer.unsqueeze(0)
+                is_declarer = is_declarer.to(device).unsqueeze(0)
+            else:
+                is_declarer = is_declarer.to(device)
         else:
             if not isinstance(is_declarer, torch.Tensor):
-                is_declarer = torch.tensor(is_declarer, dtype=torch.float32).view(-1, 1)
+                is_declarer = torch.tensor(is_declarer, dtype=torch.float32, device=device).view(-1, 1)
             elif is_declarer.dim() == 1:
-                is_declarer = is_declarer.view(-1, 1)
+                is_declarer = is_declarer.to(device).view(-1, 1)
+            else:
+                is_declarer = is_declarer.to(device)
                 
         is_declarer = is_declarer.float()
         x = torch.cat([hand, trick_history, deduction_flags, is_declarer], dim=-1)

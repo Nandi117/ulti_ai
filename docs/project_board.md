@@ -11,6 +11,6 @@
 - [x] **Task 6**: Implement the Rablóulti Trick-taking Phase logic.
 - [x] **Task 7**: Wrap the engine in a `gymnasium.Env`.
 
-## Phase 3: Neuro-Symbolic Agent Integration (CURRENT)
+## Phase 3: Neuro-Symbolic Agent Integration (COMPLETED)
 - [x] **Task 8**: Implement Masked Softmax logic for PyTorch and a Baseline Heuristic Agent.
-- [ ] **Task 9**: Implement the PPO MARL Training Loop with Fictitious Play.
+- [x] **Task 9**: Implement the PPO MARL Training Loop with Fictitious Play.

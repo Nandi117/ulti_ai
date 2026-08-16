@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 from collections import deque
 from typing import Dict, List, Optional, Any, Tuple
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -16,6 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from engine.environments.ulti import UltiEnv
 from agent.ppo import PPOMultiHeadAgent
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def load_hyperparams(path: str = "config/hyperparams.json") -> Optional[Dict[str, Any]]:
     try:
@@ -68,19 +71,19 @@ def compute_advantages(rewards: List[float], values: List[float], dones: List[bo
 def stack_obs(obs_list: List[Dict[str, np.ndarray]]) -> Dict[str, torch.Tensor]:
     stacked: Dict[str, torch.Tensor] = {}
     for k in obs_list[0].keys():
-        stacked[k] = torch.tensor(np.stack([o[k] for o in obs_list]))
+        stacked[k] = torch.tensor(np.stack([o[k] for o in obs_list]), device=device)
     return stacked
 
 def update_agent(agent: PPOMultiHeadAgent, optimizer: optim.Optimizer, buffer: ReplayBuffer, params: Dict[str, Any]) -> Tuple[float, float, float]:
     obs_batch = stack_obs(buffer.obs)
-    actions = torch.tensor(buffer.actions)
-    old_logprobs = torch.tensor(buffer.logprobs)
-    returns = torch.tensor(compute_advantages(buffer.rewards, buffer.values, buffer.dones, params["gamma"], params["gae_lambda"])) + torch.tensor(buffer.values)
-    advantages = returns - torch.tensor(buffer.values)
+    actions = torch.tensor(buffer.actions, device=device)
+    old_logprobs = torch.tensor(buffer.logprobs, device=device)
+    returns = torch.tensor(compute_advantages(buffer.rewards, buffer.values, buffer.dones, params["gamma"], params["gae_lambda"]), device=device) + torch.tensor(buffer.values, device=device)
+    advantages = returns - torch.tensor(buffer.values, device=device)
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     
-    is_declarers = torch.tensor(buffer.is_declarer, dtype=torch.float32).unsqueeze(1)
-    masks = torch.tensor(np.array(buffer.action_masks), dtype=torch.bool)
+    is_declarers = torch.tensor(buffer.is_declarer, dtype=torch.float32, device=device).unsqueeze(1)
+    masks = torch.tensor(np.array(buffer.action_masks), dtype=torch.bool, device=device)
     
     dataset_size = len(buffer.obs)
     batch_size = params["batch_size"]
@@ -150,19 +153,22 @@ def train() -> None:
     os.makedirs("logs", exist_ok=True)
     os.makedirs("models", exist_ok=True)
     
-    writer = SummaryWriter(log_dir="logs/tb")
+    writer = SummaryWriter(log_dir=f"logs/tb/run_{int(time.time())}")
     
     hyperparams_file = "config/hyperparams.json"
     params = load_hyperparams(hyperparams_file)
     last_reload = time.time()
     
-    agent = PPOMultiHeadAgent()
+    agent = PPOMultiHeadAgent().to(device)
+    if os.path.exists("models/agent_checkpoint.pth"):
+        agent.load_state_dict(torch.load("models/agent_checkpoint.pth", weights_only=True, map_location=device))
+        print("Loaded existing checkpoint!")
     optimizer = optim.Adam(agent.parameters(), lr=params["learning_rate"])
     
     historical_weights = deque(maxlen=params["fictitious_play_history_size"])
     
     # Defenders might use older weights for Fictitious Play
-    defender_agents = [PPOMultiHeadAgent(), PPOMultiHeadAgent()]
+    defender_agents = [PPOMultiHeadAgent().to(device), PPOMultiHeadAgent().to(device)]
     for da in defender_agents:
         da.load_state_dict(agent.state_dict())
         da.eval()
@@ -173,6 +179,10 @@ def train() -> None:
     global_step = 0
     episodes = 0
     wins = 0
+    total_reward = 0.0
+    from collections import defaultdict
+    bid_counts = defaultdict(int)
+    bid_wins = defaultdict(int)
     
     obs, info = env.reset()
     
@@ -194,12 +204,12 @@ def train() -> None:
         mode = "normal"
         if env.auction.highest_bid is not None:
             bid_val = env.auction.highest_bid
-            if bid_val > 20: # Simplified heuristic for mode
+            if bid_val.points > 20: # Simplified heuristic for mode
                 mode = "durchmars"
-            elif bid_val > 10:
+            elif bid_val.points > 10:
                 mode = "betli"
                 
-        action_mask = torch.tensor(info["action_mask"], dtype=torch.bool)
+        action_mask = torch.tensor(info["action_mask"], dtype=torch.bool, device=device)
         
         # Fictitious Play for defenders
         use_agent = agent
@@ -212,18 +222,26 @@ def train() -> None:
             )
             
         next_obs, reward, terminated, truncated, info = env.step(action.item())
+        total_reward += reward
         
         # Only store transitions for the learning agent (or the main policy)
         if use_agent == agent:
-            buffer.store(obs, action.item(), logprob.item(), reward, value.item(), terminated, is_declarer, action_mask.numpy(), mode)
+            buffer.store(obs, action.item(), logprob.item(), reward, value.item(), terminated, is_declarer, action_mask.cpu().numpy(), mode)
             
         obs = next_obs
         global_step += 1
         
         if terminated or truncated:
             episodes += 1
+            if env.auction.highest_bid is None:
+                bid_name = "pass"
+            else:
+                bid_name = env.auction.highest_bid.name
+            
+            bid_counts[bid_name] += 1
             if reward > 0:
                 wins += 1
+                bid_wins[bid_name] += 1
                 
             obs, info = env.reset()
             
@@ -248,8 +266,27 @@ def train() -> None:
             writer.add_scalar("Loss/Critic", c_loss, global_step)
             writer.add_scalar("Loss/Entropy", e_loss, global_step)
             writer.add_scalar("Metrics/WinRate", win_rate, global_step)
+            writer.add_scalar("Metrics/AverageReward", total_reward / max(1, episodes), global_step)
+            if bid_counts:
+                labels = list(bid_counts.keys())
+                sizes = list(bid_counts.values())
+                fig_pie, ax_pie = plt.subplots(figsize=(8, 8))
+                ax_pie.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
+                ax_pie.axis('equal')
+                writer.add_figure("Charts/Bid_Distribution", fig_pie, global_step)
+                
+                rates = [bid_wins[k] / max(1, bid_counts[k]) for k in labels]
+                fig_bar, ax_bar = plt.subplots(figsize=(10, 6))
+                ax_bar.bar(labels, rates)
+                ax_bar.set_ylim(0, 1.0)
+                ax_bar.set_ylabel('Win Rate')
+                ax_bar.set_title('Win Rate per Bid Type')
+                plt.setp(ax_bar.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+                fig_bar.tight_layout()
+                writer.add_figure("Charts/Bid_WinRates", fig_bar, global_step)
             
-            print(f"Step: {global_step} | Win Rate: {win_rate:.2f} | A_Loss: {a_loss:.4f} | C_Loss: {c_loss:.4f}")
+            print(f"Step: {global_step} | Win Rate: {win_rate:.2f} | Avg Reward: {(total_reward / max(1, episodes)):.2f} | A_Loss: {a_loss:.4f} | C_Loss: {c_loss:.4f}")
+            torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
             
             # Store checkpoint for Fictitious Play
             historical_weights.append(copy.deepcopy(agent.state_dict()))
@@ -262,6 +299,9 @@ def train() -> None:
             # Reset counters
             episodes = 0
             wins = 0
+            total_reward = 0.0
+            bid_counts.clear()
+            bid_wins.clear()
 
 if __name__ == "__main__":
     train()

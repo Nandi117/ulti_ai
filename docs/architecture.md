@@ -20,3 +20,8 @@ This document outlines the core mathematical and architectural decisions for the
     - **Betli Head**: Strategy focused on losing tricks and avoiding capture.
     - **Durchmars Head**: Strategy focused on absolute control and sweeping all tricks.
   - The separation prevents catastrophic forgetting and confusion caused by contradictory game objectives.
+
+## 4. Multi-Agent RL Training Loop
+- **Self-Play Dynamics**: Training begins against a hardcoded Heuristic/Random Baseline agent to verify mathematical stability. It then graduates to Fictitious Play, where the agent plays against a pool of its own historical checkpoints to prevent overfitting.
+- **Role Asymmetry (3-Player)**: A Shared Policy approach is used. The network learns to play both the Declarer (solo) and Defender (co-op) roles using the same weights. A boolean flag (`is_declarer=True/False`) is passed into the observation state to context-switch the agent's strategy.
+- **Masked Softmax**: The engine's Action Mask is enforced directly inside the PyTorch forward pass. A massive negative penalty (`-1e9`) is added to the logits of illegal moves prior to the Softmax activation, mathematically ensuring illegal moves have a 0.0% probability of being sampled.

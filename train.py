@@ -201,13 +201,13 @@ def train() -> None:
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        # Decide mode based on highest bid (simplified)
+        # Decide mode based on highest bid
         mode = "normal"
         if env.auction.highest_bid is not None:
             bid_val = env.auction.highest_bid
-            if bid_val.points > 20: # Simplified heuristic for mode
+            if bid_val.is_durchmars:
                 mode = "durchmars"
-            elif bid_val.points > 10:
+            elif bid_val.is_betli:
                 mode = "betli"
                 
         action_mask = torch.tensor(info["action_mask"], dtype=torch.bool, device=device)

@@ -83,7 +83,7 @@ class UltiEnv(gym.Env):
         }
 
     def _get_info(self) -> dict:
-        mask = np.zeros(41, dtype=np.int8)
+        mask = np.zeros(54, dtype=np.int8)
         if self.phase == "bidding":
             bidding_mask = self.auction.get_action_mask()
             mask[:len(bidding_mask)] = bidding_mask
@@ -123,15 +123,33 @@ class UltiEnv(gym.Env):
                     # Auto-pick the non-Piros suit the declarer has the most of
                     declarer_hand = self.hands[self.auction.highest_bidder]
                     suit_counts = {Suit.ACORNS: 0, Suit.LEAVES: 0, Suit.BELLS: 0}
-                    from engine.trick import ALL_CARDS
                     for c_id in np.where(declarer_hand)[0]:
                         suit = ALL_CARDS[c_id].suit
                         if suit in suit_counts:
                             suit_counts[suit] += 1
                     self.trump_suit = max(suit_counts, key=suit_counts.get)
                     
-                self.trick = Trick(trump_suit=self.trump_suit)
+                self.trick = Trick(trump_suit=self.trump_suit, is_betli_or_durchmars=bid.is_betli or bid.is_durchmars)
                 self.current_player = self.auction.highest_bidder
+                
+                # Check 4 Aces and Marriages
+                declarer_hand_ids = np.where(self.hands[self.auction.highest_bidder])[0]
+                declarer_cards = [ALL_CARDS[c_id] for c_id in declarer_hand_ids]
+                aces_count = sum(1 for c in declarer_cards if c.rank == Rank.ACE)
+                self.declarer_had_4_aces = (aces_count == 4)
+                
+                for i in range(3):
+                    player_hand_ids = np.where(self.hands[i])[0]
+                    player_cards = [ALL_CARDS[c_id] for c_id in player_hand_ids]
+                    for suit in Suit:
+                        has_king = any(c.suit == suit and c.rank == Rank.KING for c in player_cards)
+                        has_over = any(c.suit == suit and c.rank == Rank.OVER for c in player_cards)
+                        if has_king and has_over:
+                            pts = 40 if suit == self.trump_suit else 20
+                            if i == self.auction.highest_bidder:
+                                self.declarer_points += pts
+                            else:
+                                self.defenders_points += pts
             else:
                 self.current_player = self.auction.active_player
                 
@@ -159,32 +177,78 @@ class UltiEnv(gym.Env):
             if len(self.trick.cards_played) == 3:
                 winner = self.trick.get_winner()
                 
-                trick_points = sum(10 for c in self.trick.cards_played if c.rank in [Rank.TEN, Rank.ACE])
-                if winner == self.auction.highest_bidder:
-                    self.declarer_tricks_won += 1
-                    self.declarer_points += trick_points
+                bid = self.auction.highest_bid
+                if not bid.is_betli and not bid.is_durchmars:
+                    trick_points = sum(10 for c in self.trick.cards_played if c.rank in [Rank.TEN, Rank.ACE])
+                    if winner == self.auction.highest_bidder:
+                        self.declarer_tricks_won += 1
+                        self.declarer_points += trick_points
+                    else:
+                        self.defenders_tricks_won += 1
+                        self.defenders_points += trick_points
                 else:
-                    self.defenders_tricks_won += 1
-                    self.defenders_points += trick_points
+                    if winner == self.auction.highest_bidder:
+                        self.declarer_tricks_won += 1
+                    else:
+                        self.defenders_tricks_won += 1
                 
-                self.current_player = winner
-                self.trick = Trick(trump_suit=self.trump_suit)
                 self.tricks_played += 1
                 
-                if self.tricks_played == 10:
+                # EARLY TERMINATION CHECKS
+                failed_early = False
+                if bid.is_betli and self.declarer_tricks_won > 0:
+                    failed_early = True
+                if bid.is_durchmars and self.defenders_tricks_won > 0:
+                    failed_early = True
+                if bid.has_ulti and self.tricks_played < 10:
+                    for card in self.trick.cards_played:
+                        if card.suit == self.trump_suit and card.rank == Rank.SEVEN:
+                            failed_early = True
+                            
+                if failed_early:
                     terminated = True
-                    if winner == self.auction.highest_bidder:
-                        self.declarer_points += 10
-                    else:
-                        self.defenders_points += 10
-                        
-                    bid = self.auction.highest_bid
+                    reward = float(-bid.points)
+                elif self.tricks_played == 10:
+                    terminated = True
+                    
+                    if not bid.is_betli and not bid.is_durchmars:
+                        if winner == self.auction.highest_bidder:
+                            self.declarer_points += 10
+                        else:
+                            self.defenders_points += 10
+                            
+                    declarer_won = True
+                    
+                    if not bid.is_betli and not bid.is_durchmars and not bid.has_40_100 and not bid.has_20_100:
+                        if self.declarer_points <= self.defenders_points:
+                            declarer_won = False
+                            
+                    if bid.has_40_100 or bid.has_20_100:
+                        if self.declarer_points < 100:
+                            declarer_won = False
+                            
+                    if bid.has_ulti:
+                        winning_card_index = self.trick.players.index(winner)
+                        winning_card = self.trick.cards_played[winning_card_index]
+                        if not (winner == self.auction.highest_bidder and winning_card.suit == self.trump_suit and winning_card.rank == Rank.SEVEN):
+                            declarer_won = False
+                            
+                    if "négy ász" in bid.name.lower():
+                        if not self.declarer_had_4_aces or self.declarer_points <= self.defenders_points:
+                            declarer_won = False
+                            
                     if bid.is_betli:
-                        reward = float(bid.points) if self.declarer_tricks_won == 0 else float(-bid.points)
-                    elif bid.is_durchmars:
-                        reward = float(bid.points) if self.declarer_tricks_won == 10 else float(-bid.points)
-                    else:
-                        reward = float(bid.points) if self.declarer_points > self.defenders_points else float(-bid.points)
+                        if self.declarer_tricks_won > 0:
+                            declarer_won = False
+                    if bid.is_durchmars:
+                        if self.declarer_tricks_won < 10:
+                            declarer_won = False
+                            
+                    reward = float(bid.points) if declarer_won else float(-bid.points)
+                
+                self.current_player = winner
+                if not terminated:
+                    self.trick = Trick(trump_suit=self.trump_suit, is_betli_or_durchmars=bid.is_betli or bid.is_durchmars)
             else:
                 self.current_player = (self.current_player + 1) % 3
 

@@ -2,8 +2,7 @@ import numpy as np
 from typing import List, Optional, Union
 from engine.core import Card, Suit, Rank
 
-# Define the standard trick-taking rank power
-RANK_POWER = {
+RANK_POWER_STANDARD = {
     Rank.SEVEN: 1,
     Rank.EIGHT: 2,
     Rank.NINE: 3,
@@ -14,15 +13,28 @@ RANK_POWER = {
     Rank.ACE: 8
 }
 
+RANK_POWER_BETLI = {
+    Rank.SEVEN: 1,
+    Rank.EIGHT: 2,
+    Rank.NINE: 3,
+    Rank.TEN: 4,
+    Rank.UNDER: 5,
+    Rank.OVER: 6,
+    Rank.KING: 7,
+    Rank.ACE: 8
+}
+
 # Generate all cards in the same order as Deck
 ALL_CARDS = [Card(suit, rank) for suit in Suit for rank in Rank]
 
 class Trick:
-    def __init__(self, trump_suit: Optional[Suit] = None):
+    def __init__(self, trump_suit: Optional[Suit] = None, is_betli_or_durchmars: bool = False):
         self.trump_suit = trump_suit
+        self.is_betli_or_durchmars = is_betli_or_durchmars
         self.cards_played: List[Card] = []
         self.players: List[int] = [] # To keep track of who played which card
         self.lead_suit: Optional[Suit] = None
+        self.rank_power = RANK_POWER_BETLI if is_betli_or_durchmars else RANK_POWER_STANDARD
 
     def play_card(self, player_id: int, card: Card):
         if not self.cards_played:
@@ -42,11 +54,11 @@ class Trick:
                 if best_card.suit != self.trump_suit:
                     best_card = card
                     best_player = player
-                elif RANK_POWER[card.rank] > RANK_POWER[best_card.rank]:
+                elif self.rank_power[card.rank] > self.rank_power[best_card.rank]:
                     best_card = card
                     best_player = player
             elif card.suit == self.lead_suit and best_card.suit != self.trump_suit:
-                if RANK_POWER[card.rank] > RANK_POWER[best_card.rank]:
+                if self.rank_power[card.rank] > self.rank_power[best_card.rank]:
                     best_card = card
                     best_player = player
                     
@@ -58,8 +70,8 @@ def get_action_mask(hand: Union[List[int], np.ndarray], trick: Trick) -> np.ndar
     hand: either a list of card IDs (0-31) or a boolean array of length 32.
     """
     mask = np.zeros(32, dtype=bool)
-    if isinstance(hand, np.ndarray) and hand.dtype == bool:
-        hand_ids = np.where(hand)[0]
+    if isinstance(hand, np.ndarray) and len(hand) == 32:
+        hand_ids = np.where(hand > 0)[0]
     else:
         hand_ids = hand
         
@@ -81,9 +93,9 @@ def get_action_mask(hand: Union[List[int], np.ndarray], trick: Trick) -> np.ndar
         highest_lead_rank_power = 0
         for card in trick.cards_played:
             if card.suit == lead_suit:
-                highest_lead_rank_power = max(highest_lead_rank_power, RANK_POWER[card.rank])
+                highest_lead_rank_power = max(highest_lead_rank_power, trick.rank_power[card.rank])
                 
-        overtrick_cards = [c_id for c_id in lead_suit_cards if RANK_POWER[ALL_CARDS[c_id].rank] > highest_lead_rank_power]
+        overtrick_cards = [c_id for c_id in lead_suit_cards if trick.rank_power[ALL_CARDS[c_id].rank] > highest_lead_rank_power]
         
         if overtrick_cards:
             for c_id in overtrick_cards:
@@ -101,9 +113,9 @@ def get_action_mask(hand: Union[List[int], np.ndarray], trick: Trick) -> np.ndar
             highest_trump_power = 0
             for card in trick.cards_played:
                 if card.suit == trick.trump_suit:
-                    highest_trump_power = max(highest_trump_power, RANK_POWER[card.rank])
+                    highest_trump_power = max(highest_trump_power, trick.rank_power[card.rank])
             
-            overtrick_trumps = [c_id for c_id in trump_cards if RANK_POWER[ALL_CARDS[c_id].rank] > highest_trump_power]
+            overtrick_trumps = [c_id for c_id in trump_cards if trick.rank_power[ALL_CARDS[c_id].rank] > highest_trump_power]
             
             if overtrick_trumps:
                 for c_id in overtrick_trumps:

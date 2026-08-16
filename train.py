@@ -183,6 +183,7 @@ def train() -> None:
     from collections import defaultdict
     bid_counts = defaultdict(int)
     bid_wins = defaultdict(int)
+    player_trajectories = {0: [], 1: [], 2: []}
     
     obs, info = env.reset()
     
@@ -221,17 +222,35 @@ def train() -> None:
                 obs, is_declarer, mode=mode, action_mask=action_mask
             )
             
+        current_player = env.current_player
         next_obs, reward, terminated, truncated, info = env.step(action.item())
         total_reward += reward
         
-        # Only store transitions for the learning agent (or the main policy)
         if use_agent == agent:
-            buffer.store(obs, action.item(), logprob.item(), reward, value.item(), terminated, is_declarer, action_mask.cpu().numpy(), mode)
+            # Store temporarily for this player
+            player_trajectories[current_player].append((obs, action.item(), logprob.item(), value.item(), is_declarer, action_mask.cpu().numpy(), mode))
             
         obs = next_obs
         global_step += 1
         
         if terminated or truncated:
+            # Flush trajectories to buffer with precise perspective rewards
+            for p_id, traj in player_trajectories.items():
+                for i, transition in enumerate(traj):
+                    obs_t, action_t, logprob_t, value_t, is_declarer_t, mask_t, mode_t = transition
+                    
+                    if i == len(traj) - 1:
+                        # Only give the terminal reward to the final step
+                        step_reward = reward if is_declarer_t == 1.0 else -reward
+                        step_done = True
+                    else:
+                        step_reward = 0.0
+                        step_done = False
+                        
+                    buffer.store(obs_t, action_t, logprob_t, step_reward, value_t, step_done, is_declarer_t, mask_t, mode_t)
+            
+            player_trajectories = {0: [], 1: [], 2: []}
+            
             episodes += 1
             if env.auction.highest_bid is None:
                 bid_name = "pass"

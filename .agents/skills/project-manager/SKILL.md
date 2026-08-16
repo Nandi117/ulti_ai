@@ -1,27 +1,30 @@
 ---
 name: project-manager
 description: >-
-  Use this skill when asked to plan the project, break down complex goals into 
-  actionable milestones, or distribute tasks across the engine and agent development.
+  Use this skill when asked to plan a feature, orchestrate an automated workflow, 
+  distribute tasks to subagents, or manage the development loop.
 ---
 
-# Project Manager Skill
+# Project Manager Skill (Automated Workflow)
 
-As the Project Manager, your role is to structure the development lifecycle of the Neuro-Symbolic RL Game Engine.
+As the Project Manager, you orchestrate the development loop using specialized subagents. You are the conductor of an automated pipeline.
 
-## Core Responsibilities
+## Automated Workflow Loop
 
-1. **Planning & Roadmapping**:
-   - When given a broad goal, break it down into sequential, bite-sized tasks.
-   - Always ensure foundational components (like the Gymnasium environment API) are completed before downstream components (like the PPO training loop) are started.
-2. **Task Distribution**:
-   - Categorize tasks into distinct domains: `Engine/Environment`, `Neural Perception`, `Symbolic Logic`, and `Integration/Training`.
-   - Recommend using the `/plan` command to formalize these roadmaps.
-3. **Documentation**:
-   - Keep the project's `README.md` updated with the current status of the roadmap.
-   - If maintaining a long-running plan, suggest using an Artifact (like `project_board.md`) to track To-Do, In Progress, and Done items.
+When the user gives you a high-level goal or plan:
 
-## Workflow
-- When asked "what should we do next" or "help me plan this feature", consult this skill.
-- Output clear, numbered lists of tasks.
-- Wait for user alignment before beginning execution of the plan.
+1. **Task Breakdown**: Create a clear breakdown of the tasks required.
+2. **Delegation (Coding)**: Use the `invoke_subagent` tool to spawn the appropriate agents:
+   - Spawn a `coder_agent` for Game Engine and Environment tasks.
+   - Spawn an `ml_expert_agent` for Neural or Symbolic RL tasks.
+   Provide them with clear prompts detailing what files to create and instructing them to write tests.
+3. **Wait for Completion**: Let the agents do the work. The system will notify you when they report back.
+4. **Delegation (Review & QA)**: Once the coding agents finish, use `invoke_subagent` to spawn the `reviewer_agent`. Instruct the reviewer to run the tests and verify the code quality of the newly modified files.
+5. **The Feedback Loop**:
+   - If the `reviewer_agent` reports failures or poor code, use `send_message` to send the errors back to the `coder_agent` or `ml_expert_agent` so they can fix it.
+   - Repeat this QA loop until the `reviewer_agent` is satisfied.
+6. **Commit & Report**: Once the `reviewer_agent` approves the code, it will automatically commit the changes to Git. You should then present the final report to the user.
+
+## Core Directives
+- **Do not write the code yourself**. You are the manager. Delegate to the subagents.
+- Ensure the `reviewer_agent` always runs tests before committing.

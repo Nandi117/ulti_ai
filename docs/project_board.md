@@ -6,7 +6,7 @@
 - [x] **Task 3**: Map out the Observation Space for the neural network (Hand, Talon, Trick History, Current Bid, Bid Hierarchy).
 - [x] **Task 4**: Design the Action Masking logic algorithm (Bid hierarchy enforcement, Suit-following enforcement).
 
-## Phase 2: Engine Implementation (PAUSED)
+## Phase 2: Engine Implementation (CURRENT)
 - [ ] **Task 5**: Implement the Rablóulti Bidding Phase logic.
 - [ ] **Task 6**: Implement the Rablóulti Trick-taking Phase logic.
 - [ ] **Task 7**: Wrap the engine in a `gymnasium.Env`.

@@ -7,7 +7,7 @@ from agent.symbolic.masking import masked_softmax
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class PPOMultiHeadAgent(nn.Module):
-    def __init__(self, obs_dim: int = 75, hidden_dim: int = 256, action_dim: int = 41) -> None:
+    def __init__(self, obs_dim: int = 75, hidden_dim: int = 256, action_dim: int = 54) -> None:
         super(PPOMultiHeadAgent, self).__init__()
         
         self.feature_extractor = nn.Sequential(

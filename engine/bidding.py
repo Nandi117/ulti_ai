@@ -16,135 +16,77 @@ class Bid:
     is_teritett: bool = False
 
 def generate_all_bids() -> List[Bid]:
+    raw_bids = [
+        (0, 0, "Passz", False, False, False, False, False, False, False),
+        (1, 2, "Piros passz", True, False, False, False, False, False, False),
+        (4, 8, "40-100", False, True, False, False, False, False, False),
+        (5, 5, "Négy ász", False, False, False, False, False, False, True),
+        (5, 9, "Ulti", False, False, False, True, False, False, False),
+        (5, 5, "Betli", False, False, False, False, True, False, False),
+        (8, 12, "Durchmars", False, False, False, False, False, True, False),
+        (8, 12, "Színtelen durchmars", False, False, False, False, False, True, False),
+        (8, 16, "40-100 négy ász", False, True, False, False, False, False, True),
+        (8, 16, "40-100 ulti", False, True, False, True, False, False, False),
+        (8, 16, "Piros 40-100", True, True, False, False, False, False, False),
+        (8, 16, "20-100", False, False, True, False, False, False, False),
+        (9, 17, "Ulti négy ász", False, False, False, True, False, False, True),
+        (10, 10, "Piros négy ász", True, False, False, False, False, False, True),
+        (10, 18, "Piros ulti", True, False, False, True, False, False, False),
+        (10, 10, "Piros betli vagy rebetli", True, False, False, False, True, False, False),
+        (10, 20, "40-100 durchmars", False, True, False, False, False, True, False),
+        (10, 20, "Ulti durchmars", False, False, False, True, False, True, False),
+        (12, 24, "40-100 ulti négy ász", False, True, False, True, False, False, True),
+        (12, 24, "20-100 négy ász", False, False, True, False, False, False, True),
+        (12, 24, "20-100 ulti", False, False, True, True, False, False, False),
+        (12, 24, "Redurchmars", False, False, False, False, False, True, False),
+        (12, 24, "Piros durchmars", True, False, False, False, False, True, False),
+        (12, 24, "Terített durchmars", False, False, False, False, False, True, True),
+        (14, 28, "40-100 ulti durchmars", False, True, False, True, False, True, False),
+        (14, 28, "20-100 durchmars", False, False, True, False, False, True, False),
+        (16, 32, "20-100 ulti négy ász", False, False, True, True, False, False, True),
+        (16, 32, "Piros 40-100 ulti", True, True, False, True, False, False, False),
+        (16, 32, "Piros 40-100 négy ász", True, True, False, False, False, False, True),
+        (16, 32, "Piros 20-100", True, False, True, False, False, False, False),
+        (16, 32, "40-100 terített durchmars", False, True, False, False, False, True, True),
+        (16, 32, "Ulti terített durchmars", False, False, False, True, False, True, True),
+        (18, 34, "Piros ulti négy ász", True, False, False, True, False, False, True),
+        (18, 36, "20-100 ulti durchmars", False, False, True, True, False, True, False),
+        (20, 40, "40-100 ulti terített durchmars", False, True, False, True, False, True, True),
+        (20, 40, "Piros 40-100 durchmars", True, True, False, False, False, True, False),
+        (20, 40, "Piros ulti durchmars", True, False, False, True, False, True, False),
+        (20, 40, "20-100 terített durchmars", False, False, True, False, False, True, True),
+        (20, 20, "Terített betli", False, False, False, False, True, False, True),
+        (24, 48, "20-100 ulti terített durchmars", False, False, True, True, False, True, True),
+        (24, 48, "Piros 40-100 ulti négy ász", True, True, False, True, False, False, True),
+        (24, 48, "Piros 20-100 négy ász", True, False, True, False, False, False, True),
+        (24, 48, "Piros 20-100 ulti", True, False, True, True, False, False, False),
+        (24, 48, "Piros terített durchmars", True, False, False, False, False, True, True),
+        (24, 48, "Színtelen terített durchmars", False, False, False, False, False, True, True),
+        (28, 56, "Piros 40-100 ulti durchmars", True, True, False, True, False, True, False),
+        (28, 56, "Piros 20-100 durchmars", True, False, True, False, False, True, False),
+        (32, 64, "Piros 20-100 ulti négy ász", True, False, True, True, False, False, True),
+        (32, 64, "Piros 40-100 terített durchmars", True, True, False, False, False, True, True),
+        (32, 64, "Piros ulti terített durchmars", True, False, False, True, False, True, True),
+        (36, 72, "Piros 20-100 ulti durchmars", True, False, True, True, False, True, False),
+        (40, 80, "Piros 40-100 ulti terített durchmars", True, True, False, True, False, True, True),
+        (40, 80, "Piros 20-100 terített durchmars", True, False, True, False, False, True, True),
+        (48, 96, "Piros 20-100 ulti terített durchmars", True, False, True, True, False, True, True)
+    ]
+    
     bids = []
-    # Action 0: Pass
-    bids.append(Bid(id=0, name="Pass", points=0))
-    
-    combinations = []
-    
-    # 1. Normal Games (Passz, 40-100, 20-100, Ulti)
-    for hund in [None, "40-100", "20-100"]:
-        for ulti in [False, True]:
-            pts = 0
-            name_parts = []
-            
-            if hund == "40-100":
-                pts += 4
-                name_parts.append("40-100")
-            elif hund == "20-100":
-                pts += 8
-                name_parts.append("20-100")
-            
-            if ulti:
-                name_parts.append("ulti")
-            
-            # Base values
-            if not hund and not ulti:
-                pts = 1
-                name_parts.append("passz")
-            elif not hund and ulti:
-                pts = 5 # 4 (ulti) + 1 (passz base)
-            elif hund == "40-100" and not ulti:
-                pts = 4
-            elif hund == "40-100" and ulti:
-                pts = 8
-            elif hund == "20-100" and not ulti:
-                pts = 8
-            elif hund == "20-100" and ulti:
-                pts = 12
-                
-            combinations.append({
-                "name": " ".join(name_parts),
-                "points": pts,
-                "has_40_100": hund == "40-100",
-                "has_20_100": hund == "20-100",
-                "has_ulti": ulti,
-                "is_betli": False,
-                "is_durchmars": False,
-                "is_teritett": False
-            })
-            
-    # 2. Betli Games
-    for teritett in [False, True]:
-        pts = 10 if teritett else 5
-        name = "terített betli" if teritett else "betli"
-        combinations.append({
-            "name": name,
-            "points": pts,
-            "has_40_100": False,
-            "has_20_100": False,
-            "has_ulti": False,
-            "is_betli": True,
-            "is_durchmars": False,
-            "is_teritett": teritett
-        })
-        
-    # 3. Durchmars Games
-    for hund in [None, "40-100", "20-100"]:
-        for ulti in [False, True]:
-            for teritett in [False, True]:
-                pts = 0
-                name_parts = []
-                
-                if hund == "40-100":
-                    pts += 4
-                    name_parts.append("40-100")
-                elif hund == "20-100":
-                    pts += 8
-                    name_parts.append("20-100")
-                    
-                if ulti:
-                    pts += 4
-                    name_parts.append("ulti")
-                    
-                if teritett:
-                    pts += 12
-                    name_parts.append("terített")
-                else:
-                    pts += 6
-                    
-                name_parts.append("durchmars")
-                
-                combinations.append({
-                    "name": " ".join(name_parts),
-                    "points": pts,
-                    "has_40_100": hund == "40-100",
-                    "has_20_100": hund == "20-100",
-                    "has_ulti": ulti,
-                    "is_betli": False,
-                    "is_durchmars": True,
-                    "is_teritett": teritett
-                })
-                
-    # Add Piros multiplier
-    final_combos = []
-    for c in combinations:
-        c["is_piros"] = False
-        final_combos.append(c)
-        c_piros = c.copy()
-        c_piros["name"] = "piros " + c["name"]
-        c_piros["points"] *= 2
-        c_piros["is_piros"] = True
-        final_combos.append(c_piros)
-        
-    # Sort deterministically by points, then alphabetically by name to avoid randomness
-    final_combos.sort(key=lambda x: (x["points"], x["name"]))
-    
-    bid_id = 1
-    for c in final_combos:
+    for i, (pts, _, name, is_p, h40, h20, is_u, is_b, is_d, is_t) in enumerate(raw_bids):
         bids.append(Bid(
-            id=bid_id,
-            name=c["name"].capitalize(),
-            points=c["points"],
-            is_piros=c["is_piros"],
-            has_40_100=c["has_40_100"],
-            has_20_100=c["has_20_100"],
-            has_ulti=c["has_ulti"],
-            is_betli=c["is_betli"],
-            is_durchmars=c["is_durchmars"],
-            is_teritett=c["is_teritett"]
+            id=i,
+            name=name.capitalize(),
+            points=pts,
+            is_piros=is_p,
+            has_40_100=h40,
+            has_20_100=h20,
+            has_ulti=is_u,
+            is_betli=is_b,
+            is_durchmars=is_d,
+            is_teritett=is_t
         ))
-        bid_id += 1
         
     return bids
 

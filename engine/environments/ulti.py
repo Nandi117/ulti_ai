@@ -13,7 +13,7 @@ class UltiEnv(gym.Env):
         super().__init__()
         
         # Bidding uses up to 41 actions, playing uses 0-31
-        self.action_space = spaces.Discrete(41)
+        self.action_space = spaces.Discrete(54)
         
         self.observation_space = spaces.Dict({
             "hand": spaces.MultiBinary(32),
@@ -113,7 +113,23 @@ class UltiEnv(gym.Env):
                     return self._get_obs(), reward, terminated, truncated, self._get_info()
                 
                 # Setup trick phase
-                self.trump_suit = Suit.ACORNS # Dummy for now
+                # Setup trick phase based on the Bid
+                bid = self.auction.highest_bid
+                if bid.is_piros:
+                    self.trump_suit = Suit.HEARTS
+                elif bid.is_betli:
+                    self.trump_suit = None
+                else:
+                    # Auto-pick the non-Piros suit the declarer has the most of
+                    declarer_hand = self.hands[self.auction.highest_bidder]
+                    suit_counts = {Suit.ACORNS: 0, Suit.LEAVES: 0, Suit.BELLS: 0}
+                    from engine.trick import ALL_CARDS
+                    for c_id in np.where(declarer_hand)[0]:
+                        suit = ALL_CARDS[c_id].suit
+                        if suit in suit_counts:
+                            suit_counts[suit] += 1
+                    self.trump_suit = max(suit_counts, key=suit_counts.get)
+                    
                 self.trick = Trick(trump_suit=self.trump_suit)
                 self.current_player = self.auction.highest_bidder
             else:

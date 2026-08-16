@@ -1,0 +1,12 @@
+{
+  "learning_rate": 3e-4,
+  "entropy_coef": 0.01,
+  "batch_size": 128,
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+  "clip_ratio": 0.2,
+  "ppo_epochs": 4,
+  "update_frequency": 2048,
+  "fictitious_play_prob": 0.2,
+  "fictitious_play_history_size": 10
+}

@@ -1,326 +1,399 @@
 import os
-import json
 import time
-import copy
-import random
-import argparse
-from pathlib import Path
-from collections import deque
-from typing import Dict, List, Optional, Any, Tuple
-import matplotlib.pyplot as plt
-
+import json
 import torch
-import torch.nn as nn
-import torch.optim as optim
+import random
 import numpy as np
+import copy
+from collections import defaultdict
+import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
+import concurrent.futures
 
 from engine.environments.ulti import UltiEnv
 from agent.ppo import PPOMultiHeadAgent
+from agent.baselines.heuristic import HeuristicAgent
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def load_hyperparams(path: str = "config/hyperparams.json") -> Optional[Dict[str, Any]]:
+def load_hyperparams(filepath):
     try:
-        with open(path, "r") as f:
+        with open(filepath, 'r') as f:
             return json.load(f)
     except Exception as e:
         print(f"Failed to load hyperparams: {e}")
         return None
 
-def write_telemetry(path: str, data: Dict[str, Any]) -> None:
-    with open(path, "a") as f:
-        f.write(json.dumps(data) + "\n")
+def write_telemetry(filepath, data):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'a') as f:
+        f.write(json.dumps(data) + '\n')
 
-class ReplayBuffer:
-    def __init__(self) -> None:
-        self.reset()
+class ParallelReplayBuffer:
+    def __init__(self):
+        self.obs = []
+        self.actions = []
+        self.logprobs = []
+        self.rewards = []
+        self.values = []
+        self.dones = []
+        self.is_declarer = []
+        self.action_masks = []
+        self.modes = []
+
+    def extend(self, trajectories):
+        for t in trajectories:
+            self.obs.append(t[0])
+            self.actions.append(t[1])
+            self.logprobs.append(t[2])
+            self.rewards.append(t[3])
+            self.values.append(t[4])
+            self.dones.append(t[5])
+            self.is_declarer.append(t[6])
+            self.action_masks.append(t[7])
+            self.modes.append(t[8])
+
+    def reset(self):
+        self.__init__()
+
+def update_agent(agent, optimizer, buffer, params):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    b_obs = {
+        "hand": torch.tensor(np.array([o["hand"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "trick_history": torch.tensor(np.array([o["trick_history"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "deduction_flags": torch.tensor(np.array([o["deduction_flags"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "trump_suit": torch.tensor(np.array([o["trump_suit"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "lead_suit": torch.tensor(np.array([o["lead_suit"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "scores": torch.tensor(np.array([o["scores"] for o in buffer.obs]), dtype=torch.float32, device=device)
+    }
+    
+    b_actions = torch.tensor(buffer.actions, dtype=torch.long, device=device)
+    b_logprobs = torch.tensor(buffer.logprobs, dtype=torch.float32, device=device)
+    b_rewards = torch.tensor(buffer.rewards, dtype=torch.float32, device=device)
+    b_values = torch.tensor(buffer.values, dtype=torch.float32, device=device)
+    b_is_declarer = torch.tensor(buffer.is_declarer, dtype=torch.float32, device=device)
+    b_masks = torch.tensor(np.array(buffer.action_masks), dtype=torch.bool, device=device)
+    
+    returns = []
+    discounted_reward = 0
+    for reward, is_done in zip(reversed(b_rewards.cpu().numpy()), reversed(buffer.dones)):
+        if is_done:
+            discounted_reward = 0
+        discounted_reward = reward + params["gamma"] * discounted_reward
+        returns.insert(0, discounted_reward)
         
-    def reset(self) -> None:
-        self.obs: List[Dict[str, np.ndarray]] = []
-        self.actions: List[int] = []
-        self.logprobs: List[float] = []
-        self.rewards: List[float] = []
-        self.values: List[float] = []
-        self.dones: List[bool] = []
-        self.is_declarer: List[float] = []
-        self.action_masks: List[np.ndarray] = []
-        self.modes: List[str] = []
-
-    def store(self, obs: Dict[str, np.ndarray], action: int, logprob: float, reward: float, value: float, done: bool, is_dec: float, mask: np.ndarray, mode: str) -> None:
-        self.obs.append(obs)
-        self.actions.append(action)
-        self.logprobs.append(logprob)
-        self.rewards.append(reward)
-        self.values.append(value)
-        self.dones.append(done)
-        self.is_declarer.append(is_dec)
-        self.action_masks.append(mask)
-        self.modes.append(mode)
-
-def compute_advantages(rewards: List[float], values: List[float], dones: List[bool], gamma: float, gae_lambda: float) -> List[float]:
-    advantages: List[float] = []
-    gae = 0
-    values = values + [0.0]
-    for i in reversed(range(len(rewards))):
-        delta = rewards[i] + gamma * values[i + 1] * (1 - dones[i]) - values[i]
-        gae = delta + gamma * gae_lambda * (1 - dones[i]) * gae
-        advantages.insert(0, gae)
-    return advantages
-
-def stack_obs(obs_list: List[Dict[str, np.ndarray]]) -> Dict[str, torch.Tensor]:
-    stacked: Dict[str, torch.Tensor] = {}
-    for k in obs_list[0].keys():
-        stacked[k] = torch.tensor(np.stack([o[k] for o in obs_list]), device=device)
-    return stacked
-
-def update_agent(agent: PPOMultiHeadAgent, optimizer: optim.Optimizer, buffer: ReplayBuffer, params: Dict[str, Any]) -> Tuple[float, float, float]:
-    obs_batch = stack_obs(buffer.obs)
-    actions = torch.tensor(buffer.actions, device=device)
-    old_logprobs = torch.tensor(buffer.logprobs, device=device)
-    returns = torch.tensor(compute_advantages(buffer.rewards, buffer.values, buffer.dones, params["gamma"], params["gae_lambda"]), device=device) + torch.tensor(buffer.values, device=device)
-    advantages = returns - torch.tensor(buffer.values, device=device)
+    returns = torch.tensor(returns, dtype=torch.float32, device=device)
+    advantages = returns - b_values
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     
-    is_declarers = torch.tensor(buffer.is_declarer, dtype=torch.float32, device=device).unsqueeze(1)
-    masks = torch.tensor(np.array(buffer.action_masks), dtype=torch.bool, device=device)
+    total_a_loss, total_c_loss, total_e_loss = 0, 0, 0
     
-    dataset_size = len(buffer.obs)
-    batch_size = params["batch_size"]
-    
-    for _ in range(params["ppo_epochs"]):
-        indices = np.random.permutation(dataset_size)
-        for start_idx in range(0, dataset_size, batch_size):
-            end_idx = min(start_idx + batch_size, dataset_size)
-            idx = indices[start_idx:end_idx]
+    for epoch in range(params.get("ppo_epochs", 4)):
+        for mode in ["normal", "betli", "durchmars", "ulti"]:
+            indices = [i for i, m in enumerate(buffer.modes) if m == mode]
+            if not indices: continue
             
-            # Since mode is categorical (string), we iterate inside or group by mode.
-            # For simplicity in this demo loop, we can evaluate one by one or mask them.
-            # To vectorize across modes, we can compute all logits and select.
-            batch_obs = {k: v[idx] for k, v in obs_batch.items()}
-            batch_is_dec = is_declarers[idx]
-            batch_masks = masks[idx]
-            batch_actions = actions[idx]
-            batch_old_logprobs = old_logprobs[idx]
-            batch_adv = advantages[idx].float()
-            batch_returns = returns[idx].float()
+            idx_tensor = torch.tensor(indices, dtype=torch.long, device=device)
             
-            modes_batch = [buffer.modes[i] for i in idx]
+            m_obs = {
+                "hand": b_obs["hand"][idx_tensor],
+                "trick_history": b_obs["trick_history"][idx_tensor],
+                "deduction_flags": b_obs["deduction_flags"][idx_tensor],
+                "trump_suit": b_obs["trump_suit"][idx_tensor],
+                "lead_suit": b_obs["lead_suit"][idx_tensor],
+                "scores": b_obs["scores"][idx_tensor]
+            }
+            m_declarer = b_is_declarer[idx_tensor]
+            m_actions = b_actions[idx_tensor]
+            m_logprobs = b_logprobs[idx_tensor]
+            m_advantages = advantages[idx_tensor]
+            m_returns = returns[idx_tensor]
+            m_masks = b_masks[idx_tensor]
             
-            # Calculate new logprobs, entropy, values
-            new_logprobs = []
-            entropies = []
-            values_list = []
+            probs, values = agent(m_obs, m_declarer, mode=mode, action_mask=m_masks)
             
-            # We process individually since mode might differ, or group by mode
-            # Optimization: could group by mode, but for robust loop we'll do simple inference
-            for i in range(len(idx)):
-                obs_i = {k: v[i] for k, v in batch_obs.items()}
-                mode_i = modes_batch[i]
-                mask_i = batch_masks[i]
-                act_i = batch_actions[i]
-                dec_i = batch_is_dec[i]
-                
-                _, logprob, entropy, val = agent.get_action_and_value(
-                    obs_i, dec_i, mode=mode_i, action_mask=mask_i, action=act_i
-                )
-                new_logprobs.append(logprob)
-                entropies.append(entropy)
-                values_list.append(val)
-                
-            new_logprobs = torch.stack(new_logprobs).squeeze(-1)
-            entropies = torch.stack(entropies).squeeze(-1)
-            values = torch.stack(values_list).squeeze(-1)
+            # Re-apply mask to ensure invalid actions stay exactly 0
+            probs = probs * m_masks.bool()
+            probs = probs + 1e-10
+            probs = probs * m_masks.bool()
+            probs = probs / probs.sum(dim=-1, keepdim=True)
             
-            ratio = torch.exp(new_logprobs - batch_old_logprobs)
-            surr1 = ratio * batch_adv
-            surr2 = torch.clamp(ratio, 1.0 - params["clip_ratio"], 1.0 + params["clip_ratio"]) * batch_adv
+            from torch.distributions.categorical import Categorical
+            dist = Categorical(probs=probs)
             
-            actor_loss = -torch.min(surr1, surr2).mean()
-            critic_loss = nn.MSELoss()(values, batch_returns)
-            entropy_loss = entropies.mean()
+            new_logprobs = dist.log_prob(m_actions)
+            entropy = dist.entropy().mean()
             
-            loss = actor_loss + 0.5 * critic_loss - params["entropy_coef"] * entropy_loss
+            logratio = new_logprobs - m_logprobs
+            ratio = logratio.exp()
+            
+            pg_loss1 = -m_advantages * ratio
+            clip_ratio = params.get("clip_ratio", 0.2)
+            pg_loss2 = -m_advantages * torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio)
+            actor_loss = torch.max(pg_loss1, pg_loss2).mean()
+            
+            critic_loss = 0.5 * ((m_returns - values.squeeze(-1)) ** 2).mean()
+            
+            loss = actor_loss - params.get("entropy_coef", 0.01) * entropy + critic_loss
             
             optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
+            torch.nn.utils.clip_grad_norm_(agent.parameters(), 0.5)
             optimizer.step()
             
-    return actor_loss.item(), critic_loss.item(), entropy_loss.item()
+            total_a_loss += actor_loss.item()
+            total_c_loss += critic_loss.item()
+            total_e_loss += entropy.item()
+            
+    return total_a_loss, total_c_loss, total_e_loss
 
-def train() -> None:
-    os.makedirs("logs", exist_ok=True)
-    os.makedirs("models", exist_ok=True)
+
+def worker_episodes(state_dict, params, phase, num_episodes=5):
+    agent = PPOMultiHeadAgent()
+    agent.load_state_dict(state_dict)
+    agent.eval()
     
-    writer = SummaryWriter(log_dir=f"logs/tb/run_{int(time.time())}")
+    heuristic = HeuristicAgent()
+    env = UltiEnv(curriculum_mode=True)
+    
+    collected_trajectories = []
+    
+    stats = {
+        "episodes": 0,
+        "wins": 0,
+        "mode_episodes": defaultdict(int),
+        "mode_wins": defaultdict(int)
+    }
+    
+    for _ in range(num_episodes):
+        obs, info = env.reset()
+        episode_traj = {0: [], 1: [], 2: []}
+        
+        while True:
+            current_player = env.current_player
+            is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
+            
+            mode = "normal"
+            if env.auction.highest_bid is not None:
+                bid_val = env.auction.highest_bid
+                if bid_val.is_durchmars: mode = "durchmars"
+                elif bid_val.is_betli: mode = "betli"
+                elif bid_val.has_ulti: mode = "ulti"
+                
+            mask = info["action_mask"]
+            legal_actions = [i for i, m in enumerate(mask) if m]
+            
+            action_item = None
+            logprob_item = 0.0
+            value_item = 0.0
+            
+            if is_declarer == 1.0:
+                with torch.no_grad():
+                    action, logprob, entropy, value = agent.get_action_and_value(
+                        obs, is_declarer, mode=mode if mode != "ulti" else "normal", action_mask=torch.tensor(mask)
+                    )
+                    action_item = action.item()
+                    logprob_item = logprob.item()
+                    value_item = value.item()
+            else:
+                if phase == 1:
+                    action_item = random.choice(legal_actions)
+                elif phase == 2:
+                    action_item = heuristic.act(obs, mask)
+                else: 
+                    with torch.no_grad():
+                        action, logprob, entropy, value = agent.get_action_and_value(
+                            obs, is_declarer, mode=mode if mode != "ulti" else "normal", action_mask=torch.tensor(mask)
+                        )
+                        action_item = action.item()
+                        logprob_item = logprob.item()
+                        value_item = value.item()
+            
+            next_obs, reward, terminated, truncated, info = env.step(action_item)
+            
+            if is_declarer == 1.0 or phase == 3:
+                episode_traj[current_player].append((obs, action_item, logprob_item, value_item, is_declarer, mask, mode))
+                
+            obs = next_obs
+            
+            if terminated or truncated:
+                stats["episodes"] += 1
+                stats["mode_episodes"][mode] += 1
+                if reward > 0:
+                    stats["wins"] += 1
+                    stats["mode_wins"][mode] += 1
+                    
+                for p_id, traj in episode_traj.items():
+                    for i, transition in enumerate(traj):
+                        obs_t, action_t, logprob_t, value_t, is_declarer_t, mask_t, mode_t = transition
+                        if i == len(traj) - 1:
+                            step_reward = reward if is_declarer_t == 1.0 else -reward
+                            step_done = True
+                        else:
+                            step_reward = 0.0
+                            step_done = False
+                        
+                        collected_trajectories.append((obs_t, action_t, logprob_t, step_reward, value_t, step_done, is_declarer_t, mask_t, mode_t))
+                break
+                
+    return collected_trajectories, dict(stats)
+
+
+def train():
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Starting Multi-Phase Curriculum Training on {device} (Highly Optimized Single-Threaded)...")
     
     hyperparams_file = "config/hyperparams.json"
     params = load_hyperparams(hyperparams_file)
-    last_reload = time.time()
     
     agent = PPOMultiHeadAgent().to(device)
-    if os.path.exists("models/agent_checkpoint.pth"):
-        agent.load_state_dict(torch.load("models/agent_checkpoint.pth", weights_only=True, map_location=device))
-        print("Loaded existing checkpoint!")
-    optimizer = optim.Adam(agent.parameters(), lr=params["learning_rate"])
     
-    historical_weights = deque(maxlen=params["fictitious_play_history_size"])
+    # Load Phase 1 Checkpoint
+    checkpoint_path = r'C:\ulti_ai\models\agent_checkpoint.pth'
+    if os.path.exists(checkpoint_path):
+        agent.load_state_dict(torch.load(checkpoint_path, map_location=device), strict=False)
+        print("Successfully loaded Phase 1 checkpoint! Starting Phase 2.")
+    else:
+        print("No checkpoint found. Starting from scratch.")
+        
+    optimizer = optim.Adam(agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     
-    # Defenders might use older weights for Fictitious Play
-    defender_agents = [PPOMultiHeadAgent().to(device), PPOMultiHeadAgent().to(device)]
-    for da in defender_agents:
-        da.load_state_dict(agent.state_dict())
-        da.eval()
+    import time
+    run_name = f"curriculum_selfplay_all_{int(time.time())}"
+    writer = SummaryWriter(f"logs/tb/{run_name}")
+    print(f"Tensorboard logs saving to logs/tb/{run_name}")
     
-    env = UltiEnv()
-    buffer = ReplayBuffer()
+    buffer = ParallelReplayBuffer()
+    heuristic = HeuristicAgent()
+    
+    # Mixed Curriculum: Randomly alternates between Level 1 (Normal) and Level 3 (Ulti) against Random opponents
+    env = UltiEnv(curriculum_mode=True, curriculum_level="mixed")
     
     global_step = 0
-    episodes = 0
-    wins = 0
-    total_reward = 0.0
-    from collections import defaultdict
-    bid_counts = defaultdict(int)
-    bid_wins = defaultdict(int)
-    player_trajectories = {0: [], 1: [], 2: []}
+    phase = 3
+    recent_win_rates = []
+    
+    batch_episodes = 0
+    batch_wins = 0
+    batch_rewards = 0.0
+    mode_eps = defaultdict(int)
+    mode_wins = defaultdict(int)
     
     obs, info = env.reset()
+    episode_traj = {0: [], 1: [], 2: []}
+    last_print = time.time()
     
     while True:
-        # Hot-reload hyperparams every 10 seconds
-        if time.time() - last_reload > 10:
-            new_params = load_hyperparams(hyperparams_file)
-            if new_params:
-                params = new_params
-                # Update learning rate if changed
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = params["learning_rate"]
-            last_reload = time.time()
-            
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        # Decide mode based on highest bid
         mode = "normal"
         if env.auction.highest_bid is not None:
             bid_val = env.auction.highest_bid
-            if bid_val.is_durchmars:
-                mode = "durchmars"
-            elif bid_val.is_betli:
-                mode = "betli"
-                
-        action_mask = torch.tensor(info["action_mask"], dtype=torch.bool, device=device)
-        
-        # Fictitious Play for defenders
-        use_agent = agent
-        if not is_declarer and random.random() < params["fictitious_play_prob"] and len(historical_weights) > 0:
-            use_agent = random.choice(defender_agents)
+            if bid_val.is_durchmars: mode = "durchmars"
+            elif bid_val.is_betli: mode = "betli"
+            elif bid_val.has_ulti: mode = "ulti"
             
-        with torch.no_grad():
-            action, logprob, entropy, value = use_agent.get_action_and_value(
-                obs, is_declarer, mode=mode, action_mask=action_mask
-            )
-            
-        current_player = env.current_player
-        next_obs, reward, terminated, truncated, info = env.step(action.item())
-        total_reward += reward
+        mask = info["action_mask"]
+        legal_actions = [i for i, m in enumerate(mask) if m]
         
-        if use_agent == agent:
-            # Store temporarily for this player
-            player_trajectories[current_player].append((obs, action.item(), logprob.item(), value.item(), is_declarer, action_mask.cpu().numpy(), mode))
+        action_item = None
+        logprob_item = 0.0
+        value_item = 0.0
+        
+        if is_declarer == 1.0:
+            with torch.no_grad():
+                action, logprob, entropy, value = agent.get_action_and_value(
+                    obs, is_declarer, mode=mode, action_mask=torch.tensor(mask, device=device)
+                )
+                action_item = action.item()
+                logprob_item = logprob.item()
+                value_item = value.item()
+        else:
+            if phase == 1:
+                action_item = random.choice(legal_actions)
+            elif phase == 2:
+                action_item = heuristic.act(obs, mask)
+            else:
+                with torch.no_grad():
+                    action, logprob, entropy, value = agent.get_action_and_value(
+                        obs, is_declarer, mode=mode, action_mask=torch.tensor(mask, device=device)
+                    )
+                    action_item = action.item()
+                    logprob_item = logprob.item()
+                    value_item = value.item()
+        
+        next_obs, reward, terminated, truncated, info = env.step(action_item)
+        
+        if is_declarer == 1.0 or phase == 3:
+            episode_traj[current_player].append((obs, action_item, logprob_item, value_item, is_declarer, mask, mode))
             
         obs = next_obs
         global_step += 1
         
         if terminated or truncated:
-            # Flush trajectories to buffer with precise perspective rewards
-            for p_id, traj in player_trajectories.items():
+            batch_episodes += 1
+            batch_rewards += reward
+            mode_eps[mode] += 1
+            if reward > 0:
+                batch_wins += 1
+                mode_wins[mode] += 1
+                
+            collected_trajectories = []
+            for p_id, traj in episode_traj.items():
                 for i, transition in enumerate(traj):
                     obs_t, action_t, logprob_t, value_t, is_declarer_t, mask_t, mode_t = transition
-                    
                     if i == len(traj) - 1:
-                        # Only give the terminal reward to the final step
                         step_reward = reward if is_declarer_t == 1.0 else -reward
                         step_done = True
                     else:
                         step_reward = 0.0
                         step_done = False
-                        
-                    buffer.store(obs_t, action_t, logprob_t, step_reward, value_t, step_done, is_declarer_t, mask_t, mode_t)
-            
-            player_trajectories = {0: [], 1: [], 2: []}
-            
-            episodes += 1
-            if env.auction.highest_bid is None:
-                bid_name = "pass"
-            else:
-                bid_name = env.auction.highest_bid.name
-            
-            bid_counts[bid_name] += 1
-            if reward > 0:
-                wins += 1
-                bid_wins[bid_name] += 1
-                
-            obs, info = env.reset()
-            
-        if len(buffer.obs) >= params["update_frequency"]:
-            a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
-            buffer.reset()
-            
-            win_rate = wins / max(1, episodes)
-            
-            # Telemetry
-            telemetry_data = {
-                "step": global_step,
-                "actor_loss": a_loss,
-                "critic_loss": c_loss,
-                "entropy": e_loss,
-                "win_rate": win_rate
-            }
-            write_telemetry("logs/telemetry.jsonl", telemetry_data)
-            
-            # TensorBoard
-            writer.add_scalar("Loss/Actor", a_loss, global_step)
-            writer.add_scalar("Loss/Critic", c_loss, global_step)
-            writer.add_scalar("Loss/Entropy", e_loss, global_step)
-            writer.add_scalar("Metrics/WinRate", win_rate, global_step)
-            writer.add_scalar("Metrics/AverageReward", total_reward / max(1, episodes), global_step)
-            if bid_counts:
-                labels = list(bid_counts.keys())
-                sizes = list(bid_counts.values())
-                fig_pie, ax_pie = plt.subplots(figsize=(8, 8))
-                ax_pie.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
-                ax_pie.axis('equal')
-                writer.add_figure("Charts/Bid_Distribution", fig_pie, global_step)
-                
-                rates = [bid_wins[k] / max(1, bid_counts[k]) for k in labels]
-                fig_bar, ax_bar = plt.subplots(figsize=(10, 6))
-                ax_bar.bar(labels, rates)
-                ax_bar.set_ylim(0, 1.0)
-                ax_bar.set_ylabel('Win Rate')
-                ax_bar.set_title('Win Rate per Bid Type')
-                plt.setp(ax_bar.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-                fig_bar.tight_layout()
-                writer.add_figure("Charts/Bid_WinRates", fig_bar, global_step)
-            
-            print(f"Step: {global_step} | Win Rate: {win_rate:.2f} | Avg Reward: {(total_reward / max(1, episodes)):.2f} | A_Loss: {a_loss:.4f} | C_Loss: {c_loss:.4f}")
-            torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
-            
-            # Store checkpoint for Fictitious Play
-            historical_weights.append(copy.deepcopy(agent.state_dict()))
-            if len(historical_weights) > 0:
-                # Update defender agents with historical weights
-                for da in defender_agents:
-                    hist_idx = random.randint(0, len(historical_weights) - 1)
-                    da.load_state_dict(historical_weights[hist_idx])
                     
-            # Reset counters
-            episodes = 0
-            wins = 0
-            total_reward = 0.0
-            bid_counts.clear()
-            bid_wins.clear()
+                    collected_trajectories.append((obs_t, action_t, logprob_t, step_reward, value_t, step_done, is_declarer_t, mask_t, mode_t))
+            
+            buffer.extend(collected_trajectories)
+            obs, info = env.reset()
+            episode_traj = {0: [], 1: [], 2: []}
+            
+            if len(buffer.obs) >= params["update_frequency"]:
+                a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
+                buffer.reset()
+                
+                win_rate = batch_wins / max(1, batch_episodes)
+                recent_win_rates.append(win_rate)
+                if len(recent_win_rates) > 10:
+                    recent_win_rates.pop(0)
+                    
+                smoothed_wr = sum(recent_win_rates) / len(recent_win_rates)
+                if smoothed_wr > 0.85 and len(recent_win_rates) == 10:
+                    if phase < 3:
+                        phase += 1
+                        recent_win_rates.clear()
+                        print(f"\n*** PROGRESSED TO CURRICULUM PHASE {phase} ***\n")
+                
+                if time.time() - last_print > 2:
+                    print(f"Phase {phase} | Step: {global_step} | Win Rate: {win_rate:.2f} | Smoothed: {smoothed_wr:.2f} | Entropy: {e_loss:.4f}")
+                    last_print = time.time()
+                
+                writer.add_scalar("Loss/Actor", a_loss, global_step)
+                writer.add_scalar("Loss/Critic", c_loss, global_step)
+                writer.add_scalar("Loss/Entropy", e_loss, global_step)
+                writer.add_scalar("Metrics/WinRate_Overall", win_rate, global_step)
+                writer.add_scalar("Metrics/Reward_Overall", batch_rewards / max(1, batch_episodes), global_step)
+                writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
+                
+                for m in ["normal", "betli", "durchmars", "ulti"]:
+                    if mode_eps[m] > 0:
+                        writer.add_scalar(f"Metrics/WinRate_{m.capitalize()}", mode_wins[m] / mode_eps[m], global_step)
+                        
+                torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
+                
+                batch_episodes = 0
+                batch_wins = 0
+                batch_rewards = 0.0
+                mode_eps.clear()
+                mode_wins.clear()
 
 if __name__ == "__main__":
     train()

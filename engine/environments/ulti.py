@@ -48,11 +48,12 @@ class UltiEnv(gym.Env):
     def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[dict, dict]:
         super().reset(seed=seed)
         
+        deck = Deck()
+        
         if self.curriculum_mode:
             import random
             from engine.bidding import ALL_BIDS
             
-            deck = Deck()
             deck.shuffle()
             
             active_level = self.curriculum_level
@@ -269,9 +270,9 @@ class UltiEnv(gym.Env):
                 elif bid.is_betli:
                     self.trump_suit = None
                 else:
-                    # Auto-pick the non-Piros suit the declarer has the most of
+                    # Auto-pick the suit the declarer has the most of (including Hearts, as requested by user)
                     declarer_hand = self.hands[self.auction.highest_bidder]
-                    suit_counts = {Suit.ACORNS: 0, Suit.LEAVES: 0, Suit.BELLS: 0}
+                    suit_counts = {Suit.ACORNS: 0, Suit.LEAVES: 0, Suit.BELLS: 0, Suit.HEARTS: 0}
                     for c_id in np.where(declarer_hand)[0]:
                         suit = ALL_CARDS[c_id].suit
                         if suit in suit_counts:
@@ -393,7 +394,8 @@ class UltiEnv(gym.Env):
                         if self.declarer_tricks_won < 10:
                             declarer_won = False
                             
-                    reward = float(bid.points) if declarer_won else float(-bid.points)
+                    # Double the reward for winning to encourage risk-taking in bidding phase
+                    reward = float(bid.points * 2) if declarer_won else float(-bid.points)
                 
                 self.current_player = winner
                 if not terminated:

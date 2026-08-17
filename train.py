@@ -259,15 +259,15 @@ def train():
     optimizer = optim.Adam(agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     
     import time
-    run_name = f"curriculum_selfplay_all_{int(time.time())}"
+    run_name = f"bidding_phase_{int(time.time())}"
     writer = SummaryWriter(f"logs/tb/{run_name}")
     print(f"Tensorboard logs saving to logs/tb/{run_name}")
     
     buffer = ParallelReplayBuffer()
     heuristic = HeuristicAgent()
     
-    # Mixed Curriculum: Randomly alternates between Level 1 (Normal) and Level 3 (Ulti) against Random opponents
-    env = UltiEnv(curriculum_mode=True, curriculum_level="mixed")
+    # Full Game Mode: No curriculum, agents bid freely
+    env = UltiEnv(curriculum_mode=False)
     
     global_step = 0
     phase = 3
@@ -383,9 +383,12 @@ def train():
                 writer.add_scalar("Metrics/Reward_Overall", batch_rewards / max(1, batch_episodes), global_step)
                 writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
                 
+                total_batch_eps = max(1, sum(mode_eps.values()))
                 for m in ["normal", "betli", "durchmars", "ulti"]:
                     if mode_eps[m] > 0:
                         writer.add_scalar(f"Metrics/WinRate_{m.capitalize()}", mode_wins[m] / mode_eps[m], global_step)
+                    writer.add_scalar(f"Metrics/Episodes_{m.capitalize()}", mode_eps[m], global_step)
+                    writer.add_scalar(f"Metrics/Percentage_{m.capitalize()}", (mode_eps[m] / total_batch_eps) * 100, global_step)
                         
                 torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
                 

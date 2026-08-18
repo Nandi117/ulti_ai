@@ -173,10 +173,15 @@ def worker_episodes(state_dict, params, phase, num_episodes=5):
             current_player = env.current_player
             is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
             
-            mode = "Passz"
-            bid = env.auction.highest_bid
-            if bid is not None and bid.id != 0:
-                mode = bid.name
+            if env.phase == "drop_talon":
+                mode = "talon"
+            elif env.phase == "decision_to_rob" or env.phase == "bidding":
+                mode = "decision_to_rob" if env.phase == "decision_to_rob" else "normal" # Default bidding to normal head for now, wait we could use normal
+            else:
+                mode = "Passz"
+                bid = env.auction.highest_bid
+                if bid is not None and bid.id != 0:
+                    mode = bid.name
             
             mask = info["action_mask"]
             legal_actions = [i for i, m in enumerate(mask) if m]
@@ -285,19 +290,26 @@ def train():
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        dash_mode = "Passz"
-        nn_mode = "normal"
-        bid = env.auction.highest_bid
-        if bid is not None and bid.id != 0:
-            dash_mode = bid.name.split(" (")[0]
-            if bid.is_betli:
-                nn_mode = "betli"
-            elif bid.is_durchmars:
-                nn_mode = "durchmars"
-            elif bid.has_ulti:
-                nn_mode = "ulti"
-            else:
-                nn_mode = "normal"
+        if env.phase == "drop_talon":
+            dash_mode = "Talon"
+            nn_mode = "talon"
+        elif env.phase == "decision_to_rob" or env.phase == "bidding":
+            dash_mode = "Robbing" if env.phase == "decision_to_rob" else "Bidding"
+            nn_mode = "decision_to_rob" if env.phase == "decision_to_rob" else "normal"
+        else:
+            dash_mode = "Passz"
+            nn_mode = "normal"
+            bid = env.auction.highest_bid
+            if bid is not None and bid.id != 0:
+                dash_mode = bid.name.split(" (")[0]
+                if bid.is_betli:
+                    nn_mode = "betli"
+                elif bid.is_durchmars:
+                    nn_mode = "durchmars"
+                elif bid.has_ulti:
+                    nn_mode = "ulti"
+                else:
+                    nn_mode = "normal"
             
         if dash_mode not in mode_eps:
             mode_eps[dash_mode] = 0

@@ -51,13 +51,19 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
     # Durchmars logic
     tens = [c for c in hand_cards if c.rank == Rank.TEN]
     high_cards_total = len(aces) + len(tens) + len(kings) + len(overs)
+    suits_in_hand = set(c.suit for c in hand_cards)
     
-    # Durchmars requires winning every trick. Without at least 3 Aces and massive high card density, it is impossible.
-    if len(aces) < 3 or high_cards_total < 7:
+    can_durchmars = False
+    if len(aces) >= 3 and high_cards_total >= 7:
+        can_durchmars = True
+    elif len(aces) == 2 and len(suits_in_hand) <= 2 and high_cards_total >= 7:
+        can_durchmars = True
+        
+    if not can_durchmars:
         allowed["durchmars"] = False
         allowed["piros durchmars"] = False
         
-    if high_cards_total >= 8 and len(aces) >= 3:
+    if high_cards_total >= 8 and (len(aces) >= 3 or (len(aces) == 2 and len(suits_in_hand) <= 2)):
         allowed["passz"] = False
         allowed["betli"] = False
         allowed["piros betli"] = False

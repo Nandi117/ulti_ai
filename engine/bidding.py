@@ -18,9 +18,15 @@ class Bid:
 def generate_all_bids() -> List[Bid]:
     raw_bids = [
         (0, 0, "Passz", False, False, False, False, False, False, False),
+        (2, 0, "Piros Passz", True, False, False, False, False, False, False),
+        (4, 0, "40-100", False, True, False, False, False, False, False),
+        (8, 0, "Piros 40-100", True, True, False, False, False, False, False),
         (5, 5, "Betli", False, False, False, False, True, False, False),
-        (5, 9, "Ulti", False, False, False, True, False, False, False),
-        (8, 12, "Durchmars", False, False, False, False, False, True, False),
+        (10, 0, "Piros Betli", True, False, False, False, True, False, False),
+        (4, 9, "Ulti", False, False, False, True, False, False, False),
+        (8, 0, "Piros Ulti", True, False, False, True, False, False, False),
+        (6, 12, "Durchmars", False, False, False, False, False, True, False),
+        (12, 0, "Piros Durchmars", True, False, False, False, False, True, False),
     ]
     
     bids = []
@@ -46,6 +52,7 @@ NUM_BIDS = len(ALL_BIDS)
 
 class Auction:
     def __init__(self, starting_player: int = 0):
+        self.starting_player: int = starting_player
         self.highest_bid: Optional[Bid] = None
         self.highest_bidder: int = -1
         self.active_player: int = starting_player

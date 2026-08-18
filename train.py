@@ -173,13 +173,11 @@ def worker_episodes(state_dict, params, phase, num_episodes=5):
             current_player = env.current_player
             is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
             
-            mode = "normal"
-            if env.auction.highest_bid is not None:
-                bid_val = env.auction.highest_bid
-                if bid_val.is_durchmars: mode = "durchmars"
-                elif bid_val.is_betli: mode = "betli"
-                elif bid_val.has_ulti: mode = "ulti"
-                
+            mode = "Passz"
+            bid = env.auction.highest_bid
+            if bid is not None and bid.id != 0:
+                mode = bid.name
+            
             mask = info["action_mask"]
             legal_actions = [i for i, m in enumerate(mask) if m]
             
@@ -287,12 +285,14 @@ def train():
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        mode = "normal"
-        if env.auction.highest_bid is not None:
-            bid_val = env.auction.highest_bid
-            if bid_val.is_durchmars: mode = "durchmars"
-            elif bid_val.is_betli: mode = "betli"
-            elif bid_val.has_ulti: mode = "ulti"
+        mode = "Passz"
+        if env.auction.highest_bid is not None and env.auction.highest_bid.id != 0:
+            mode = env.auction.highest_bid.name
+            
+        if mode not in mode_eps:
+            mode_eps[mode] = 0
+        if mode not in mode_wins:
+            mode_wins[mode] = 0
             
         mask = info["action_mask"]
         legal_actions = [i for i, m in enumerate(mask) if m]
@@ -356,6 +356,11 @@ def train():
             obs, info = env.reset()
             episode_traj = {0: [], 1: [], 2: []}
             
+            # Ensure cumulative trackers exist
+            if 'cumulative_mode_eps' not in locals():
+                cumulative_mode_eps = {"normal": 0, "betli": 0, "durchmars": 0, "ulti": 0}
+                cumulative_mode_wins = {"normal": 0, "betli": 0, "durchmars": 0, "ulti": 0}
+            
             if len(buffer.obs) >= params["update_frequency"]:
                 a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
                 buffer.reset()
@@ -384,11 +389,34 @@ def train():
                 writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
                 
                 total_batch_eps = max(1, sum(mode_eps.values()))
+                percentages = {}
+                win_rates = {}
                 for m in ["normal", "betli", "durchmars", "ulti"]:
                     if mode_eps[m] > 0:
-                        writer.add_scalar(f"Metrics/WinRate_{m.capitalize()}", mode_wins[m] / mode_eps[m], global_step)
+                        cumulative_mode_eps[m] += mode_eps[m]
+                        cumulative_mode_wins[m] += mode_wins[m]
+                        
+                        batch_wr = mode_wins[m] / mode_eps[m]
+                        writer.add_scalar(f"Metrics/WinRate_{m.capitalize()}", batch_wr, global_step)
+                        
+                    if cumulative_mode_eps[m] > 0:
+                        win_rates[m.capitalize()] = (cumulative_mode_wins[m] / cumulative_mode_eps[m]) * 100
+                    else:
+                        win_rates[m.capitalize()] = 0.0
+                        
                     writer.add_scalar(f"Metrics/Episodes_{m.capitalize()}", mode_eps[m], global_step)
-                    writer.add_scalar(f"Metrics/Percentage_{m.capitalize()}", (mode_eps[m] / total_batch_eps) * 100, global_step)
+                    
+                total_cumulative_eps = max(1, sum(cumulative_mode_eps.values()))
+                for m in ["normal", "betli", "durchmars", "ulti"]:
+                    percentages[m.capitalize()] = (cumulative_mode_eps[m] / total_cumulative_eps) * 100
+                    
+                import json
+                with open("logs/bidding_percentages.json", "w") as f:
+                    json.dump({
+                        "percentages": percentages, 
+                        "win_rates": win_rates,
+                        "totals": cumulative_mode_eps
+                    }, f)
                         
                 torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
                 

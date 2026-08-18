@@ -44,7 +44,6 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
         allowed["piros betli"] = False
         
     if high_cards_count == 0 and (len(sevens) + len(eights) + len(nines)) >= 6:
-        allowed["passz"] = False
         allowed["durchmars"] = False
         allowed["piros durchmars"] = False
         
@@ -56,7 +55,8 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
     can_durchmars = False
     if len(aces) >= 3 and high_cards_total >= 7:
         can_durchmars = True
-    elif len(aces) == 2 and len(suits_in_hand) <= 2 and high_cards_total >= 7:
+    elif len(aces) == 2 and len(suits_in_hand) <= 2 and high_cards_total >= 9:
+        # Exactly 2 colors, 2 Aces, and almost completely solid high cards (Aces, Tens, Kings, Overs)
         can_durchmars = True
         
     if not can_durchmars:
@@ -64,14 +64,12 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
         allowed["piros durchmars"] = False
         
     if high_cards_total >= 8 and (len(aces) >= 3 or (len(aces) == 2 and len(suits_in_hand) <= 2)):
-        allowed["passz"] = False
         allowed["betli"] = False
         allowed["piros betli"] = False
         
     # Ulti logic
     can_play_ulti = False
     can_play_piros_ulti = False
-    has_strong_ulti = False
     
     for suit in Suit:
         suit_cards = [c for c in hand_cards if c.suit == suit]
@@ -83,16 +81,10 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
             if suit == Suit.HEARTS:
                 can_play_piros_ulti = True
                 
-        if has_vii and has_ace and len(suit_cards) >= 4:
-            has_strong_ulti = True
-            
     if not can_play_ulti:
         allowed["ulti"] = False
     if not can_play_piros_ulti:
         allowed["piros ulti"] = False
-        
-    if has_strong_ulti:
-        allowed["passz"] = False
         
     return allowed
 

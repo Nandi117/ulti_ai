@@ -53,10 +53,9 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
     suits_in_hand = set(c.suit for c in hand_cards)
     
     can_durchmars = False
-    if len(aces) >= 3 and high_cards_total >= 7:
+    if len(aces) >= 3 and high_cards_total >= 9:
         can_durchmars = True
-    elif len(aces) == 2 and len(suits_in_hand) <= 2 and high_cards_total >= 9:
-        # Exactly 2 colors, 2 Aces, and almost completely solid high cards (Aces, Tens, Kings, Overs)
+    elif len(aces) == 2 and len(suits_in_hand) <= 2 and high_cards_total >= 10:
         can_durchmars = True
         
     if not can_durchmars:

@@ -3,17 +3,18 @@ from gymnasium import spaces
 import numpy as np
 
 from engine.core import Deck, Suit, Rank
-from engine.bidding import Auction
+from engine.bidding import Auction, ALL_BIDS
 from engine.trick import Trick, get_action_mask, ALL_CARDS
 
 class UltiEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    def __init__(self, curriculum_mode: bool = False, curriculum_level: int = 1):
+    def __init__(self, curriculum_mode: bool = False, curriculum_level: int = 1, training_filter_mode: bool = False):
         super().__init__()
         
         self.curriculum_mode = curriculum_mode
         self.curriculum_level = curriculum_level
+        self.training_filter_mode = training_filter_mode
         
         # Bidding uses up to 41 actions, playing uses 0-31
         self.action_space = spaces.Discrete(54)

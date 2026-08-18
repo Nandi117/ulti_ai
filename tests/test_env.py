@@ -10,7 +10,7 @@ class TestUltiEnv(unittest.TestCase):
 
     def test_spaces(self):
         self.assertIsInstance(self.env.action_space, gym.spaces.Discrete)
-        self.assertEqual(self.env.action_space.n, 41)
+        self.assertEqual(self.env.action_space.n, 54)
         
         self.assertIsInstance(self.env.observation_space, gym.spaces.Dict)
         self.assertIn("hand", self.env.observation_space.spaces)
@@ -29,7 +29,7 @@ class TestUltiEnv(unittest.TestCase):
         self.assertEqual(obs["deduction_flags"].shape, (12,))
         
         self.assertIn("action_mask", info)
-        self.assertEqual(info["action_mask"].shape, (41,))
+        self.assertEqual(info["action_mask"].shape, (54,))
         self.assertEqual(self.env.phase, "bidding")
 
     def test_step_bidding(self):

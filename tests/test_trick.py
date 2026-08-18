@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from engine.core import Card, Suit, Rank
-from engine.trick import Trick, get_action_mask, ALL_CARDS, RANK_POWER
+from engine.trick import Trick, get_action_mask, ALL_CARDS
 
 def get_card_id(suit: Suit, rank: Rank) -> int:
     for i, c in enumerate(ALL_CARDS):

@@ -31,6 +31,8 @@ class PPOMultiHeadAgent(nn.Module):
         self.policy_betli = nn.Linear(hidden_dim, action_dim)
         self.policy_durchmars = nn.Linear(hidden_dim, action_dim)
         self.policy_ulti = nn.Linear(hidden_dim, action_dim)
+        self.policy_talon = nn.Linear(hidden_dim, action_dim)
+        self.policy_rob = nn.Linear(hidden_dim, action_dim)
         
     def _preprocess(self, obs_dict: Dict[str, Any], is_declarer: Union[float, int, torch.Tensor]) -> torch.Tensor:
         model_device = next(self.parameters()).device
@@ -97,6 +99,10 @@ class PPOMultiHeadAgent(nn.Module):
             logits = self.policy_durchmars(features)
         elif mode == "ulti":
             logits = self.policy_ulti(features)
+        elif mode == "talon":
+            logits = self.policy_talon(features)
+        elif mode == "decision_to_rob":
+            logits = self.policy_rob(features)
         else:
             logits = self.policy_normal(features)
             

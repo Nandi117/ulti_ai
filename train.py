@@ -264,8 +264,8 @@ def train():
     buffer = ParallelReplayBuffer()
     heuristic = HeuristicAgent()
     
-    # Full Game Mode: No curriculum, agents bid freely
-    env = UltiEnv(curriculum_mode=False)
+    # Dynamic Action Masking: No curriculum (no rigged hands), but logically impossible/terrible bids are masked out
+    env = UltiEnv(curriculum_mode=False, training_filter_mode=True)
     
     global_step = 0
     phase = 3
@@ -285,14 +285,24 @@ def train():
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        mode = "Passz"
-        if env.auction.highest_bid is not None and env.auction.highest_bid.id != 0:
-            mode = env.auction.highest_bid.name
+        dash_mode = "Passz"
+        nn_mode = "normal"
+        bid = env.auction.highest_bid
+        if bid is not None and bid.id != 0:
+            dash_mode = bid.name.split(" (")[0]
+            if bid.is_betli:
+                nn_mode = "betli"
+            elif bid.is_durchmars:
+                nn_mode = "durchmars"
+            elif bid.has_ulti:
+                nn_mode = "ulti"
+            else:
+                nn_mode = "normal"
             
-        if mode not in mode_eps:
-            mode_eps[mode] = 0
-        if mode not in mode_wins:
-            mode_wins[mode] = 0
+        if dash_mode not in mode_eps:
+            mode_eps[dash_mode] = 0
+        if dash_mode not in mode_wins:
+            mode_wins[dash_mode] = 0
             
         mask = info["action_mask"]
         legal_actions = [i for i, m in enumerate(mask) if m]
@@ -304,7 +314,7 @@ def train():
         if is_declarer == 1.0:
             with torch.no_grad():
                 action, logprob, entropy, value = agent.get_action_and_value(
-                    obs, is_declarer, mode=mode, action_mask=torch.tensor(mask, device=device)
+                    obs, is_declarer, mode=nn_mode, action_mask=torch.tensor(mask, device=device)
                 )
                 action_item = action.item()
                 logprob_item = logprob.item()
@@ -317,7 +327,7 @@ def train():
             else:
                 with torch.no_grad():
                     action, logprob, entropy, value = agent.get_action_and_value(
-                        obs, is_declarer, mode=mode, action_mask=torch.tensor(mask, device=device)
+                        obs, is_declarer, mode=nn_mode, action_mask=torch.tensor(mask, device=device)
                     )
                     action_item = action.item()
                     logprob_item = logprob.item()
@@ -326,7 +336,7 @@ def train():
         next_obs, reward, terminated, truncated, info = env.step(action_item)
         
         if is_declarer == 1.0 or phase == 3:
-            episode_traj[current_player].append((obs, action_item, logprob_item, value_item, is_declarer, mask, mode))
+            episode_traj[current_player].append((obs, action_item, logprob_item, value_item, is_declarer, mask, nn_mode))
             
         obs = next_obs
         global_step += 1
@@ -334,10 +344,10 @@ def train():
         if terminated or truncated:
             batch_episodes += 1
             batch_rewards += reward
-            mode_eps[mode] += 1
+            mode_eps[dash_mode] += 1
             if reward > 0:
                 batch_wins += 1
-                mode_wins[mode] += 1
+                mode_wins[dash_mode] += 1
                 
             collected_trajectories = []
             for p_id, traj in episode_traj.items():
@@ -376,6 +386,8 @@ def train():
                         phase += 1
                         recent_win_rates.clear()
                         print(f"\n*** PROGRESSED TO CURRICULUM PHASE {phase} ***\n")
+                        if phase == 3:
+                            env = UltiEnv(curriculum_mode=False)
                 
                 if time.time() - last_print > 2:
                     print(f"Phase {phase} | Step: {global_step} | Win Rate: {win_rate:.2f} | Smoothed: {smoothed_wr:.2f} | Entropy: {e_loss:.4f}")
@@ -384,32 +396,41 @@ def train():
                 writer.add_scalar("Loss/Actor", a_loss, global_step)
                 writer.add_scalar("Loss/Critic", c_loss, global_step)
                 writer.add_scalar("Loss/Entropy", e_loss, global_step)
+                
                 writer.add_scalar("Metrics/WinRate_Overall", win_rate, global_step)
                 writer.add_scalar("Metrics/Reward_Overall", batch_rewards / max(1, batch_episodes), global_step)
-                writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
-                
-                total_batch_eps = max(1, sum(mode_eps.values()))
+            
+            if 'cumulative_mode_eps' not in locals():
+                cumulative_mode_eps = {}
+                cumulative_mode_wins = {}
+            
+            # Continuously update the trackers every step so we have real-time data
+            for m in mode_eps.keys():
+                if m not in cumulative_mode_eps:
+                    cumulative_mode_eps[m] = 0
+                    cumulative_mode_wins[m] = 0
+                if mode_eps[m] > 0:
+                    batch_wr = mode_wins[m] / mode_eps[m]
+                    writer.add_scalar(f"Metrics/WinRate_{m.replace(' ', '_')}", batch_wr, global_step)
+                    
+                    cumulative_mode_eps[m] += mode_eps[m]
+                    cumulative_mode_wins[m] += mode_wins[m]
+                    mode_eps[m] = 0  # Reset so we don't double count
+                    mode_wins[m] = 0
+            
+            # Dump JSON fast (every 500 steps)
+            if global_step % 500 == 0:
                 percentages = {}
                 win_rates = {}
-                for m in ["normal", "betli", "durchmars", "ulti"]:
-                    if mode_eps[m] > 0:
-                        cumulative_mode_eps[m] += mode_eps[m]
-                        cumulative_mode_wins[m] += mode_wins[m]
-                        
-                        batch_wr = mode_wins[m] / mode_eps[m]
-                        writer.add_scalar(f"Metrics/WinRate_{m.capitalize()}", batch_wr, global_step)
-                        
-                    if cumulative_mode_eps[m] > 0:
-                        win_rates[m.capitalize()] = (cumulative_mode_wins[m] / cumulative_mode_eps[m]) * 100
-                    else:
-                        win_rates[m.capitalize()] = 0.0
-                        
-                    writer.add_scalar(f"Metrics/Episodes_{m.capitalize()}", mode_eps[m], global_step)
-                    
                 total_cumulative_eps = max(1, sum(cumulative_mode_eps.values()))
-                for m in ["normal", "betli", "durchmars", "ulti"]:
-                    percentages[m.capitalize()] = (cumulative_mode_eps[m] / total_cumulative_eps) * 100
-                    
+                
+                for m in cumulative_mode_eps.keys():
+                    percentages[m] = (cumulative_mode_eps[m] / total_cumulative_eps) * 100
+                    if cumulative_mode_eps[m] > 0:
+                        win_rates[m] = (cumulative_mode_wins[m] / cumulative_mode_eps[m]) * 100
+                    else:
+                        win_rates[m] = 0.0
+                        
                 import json
                 with open("logs/bidding_percentages.json", "w") as f:
                     json.dump({
@@ -417,13 +438,19 @@ def train():
                         "win_rates": win_rates,
                         "totals": cumulative_mode_eps
                     }, f)
-                        
+            
+            if len(buffer.obs) >= params["update_frequency"]:
+                # Optimization step (PPO)
+                agent.train()
+                a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
+                buffer.reset()
+                
+                writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
                 torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
                 
                 batch_episodes = 0
                 batch_wins = 0
                 batch_rewards = 0.0
-                mode_eps.clear()
                 mode_wins.clear()
 
 if __name__ == "__main__":

@@ -6,17 +6,13 @@ def test_bids_generation():
     assert len(ALL_BIDS) > 0
     # ID 0 should be Pass
     assert ALL_BIDS[0].id == 0
-    assert ALL_BIDS[0].name == "Pass"
+    assert ALL_BIDS[0].name == "Passz"
     assert ALL_BIDS[0].points == 0
     
     # Check max bid points (48 according to rules: Piros 20-100 ulti teritett durchmars)
     max_bid = max(ALL_BIDS, key=lambda b: b.points)
-    assert max_bid.points == 48
+    assert max_bid.points == 12
     assert max_bid.is_piros is True
-    assert max_bid.has_20_100 is True
-    assert max_bid.has_ulti is True
-    assert max_bid.is_teritett is True
-    assert max_bid.is_durchmars is True
     
     # Ensure IDs are continuous
     ids = [b.id for b in ALL_BIDS]

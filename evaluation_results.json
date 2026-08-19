@@ -2,30 +2,54 @@
     {
         "opponents": "agent",
         "total_games": 1000,
-        "games_as_declarer": 999,
-        "wins": 393,
-        "win_rate": 39.33933933933934,
+        "games_as_declarer_p0": 994,
+        "wins_p0": 195,
+        "win_rate_p0": 19.61770623742455,
         "bidding_distribution": {
-            "Passz": 999,
-            "40-100": 1
+            "Passz": 992,
+            "Ulti": 2,
+            "Piros passz": 1,
+            "Piros ulti": 1,
+            "Betli": 3,
+            "Piros betli": 1
         }
     },
     {
         "opponents": "random",
         "total_games": 1000,
-        "games_as_declarer": 52,
-        "wins": 23,
-        "win_rate": 44.230769230769226,
+        "games_as_declarer_p0": 11,
+        "wins_p0": 3,
+        "win_rate_p0": 27.27272727272727,
         "bidding_distribution": {
-            "40-100": 94,
-            "Piros 40-100": 117,
-            "Ulti": 156,
-            "Piros passz": 136,
-            "Passz": 52,
-            "Piros durchmars": 80,
-            "Piros ulti": 114,
-            "Piros betli": 210,
-            "Betli": 41
+            "Piros durchmars": 617,
+            "Betli": 31,
+            "Passz": 11,
+            "Piros 40-100": 55,
+            "Piros betli": 136,
+            "Durchmars": 42,
+            "Piros ulti": 59,
+            "Piros passz": 14,
+            "40-100": 15,
+            "Ulti": 20
+        }
+    },
+    {
+        "opponents": "heuristic",
+        "total_games": 1000,
+        "games_as_declarer_p0": 6,
+        "wins_p0": 1,
+        "win_rate_p0": 16.666666666666664,
+        "bidding_distribution": {
+            "Durchmars": 39,
+            "Piros betli": 153,
+            "Piros durchmars": 638,
+            "Piros 40-100": 61,
+            "Piros ulti": 51,
+            "Betli": 17,
+            "Ulti": 17,
+            "Passz": 6,
+            "40-100": 10,
+            "Piros passz": 8
         }
     }
 ]

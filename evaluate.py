@@ -7,18 +7,23 @@ from engine.environments.ulti import UltiEnv
 from agent.ppo import PPOMultiHeadAgent
 from agent.baselines.heuristic import HeuristicAgent
 
-def load_agent(device):
-    agent = PPOMultiHeadAgent().to(device)
-    checkpoint_path = r'C:\ulti_ai\models\agent_checkpoint_belief_tracker_final.pth'
+def load_agents(device):
+    declarer_agent = PPOMultiHeadAgent().to(device)
+    defender_agent = PPOMultiHeadAgent().to(device)
+    
+    checkpoint_path = r'C:\ulti_ai\models\best_model_exceptional_hand.pth'
     if os.path.exists(checkpoint_path):
-        agent.load_state_dict(torch.load(checkpoint_path, map_location=device))
-        print("Model loaded successfully.")
+        state_dict = torch.load(checkpoint_path, map_location=device)
+        declarer_agent.load_state_dict(state_dict['declarer'])
+        defender_agent.load_state_dict(state_dict['defender'])
+        print(f"Model loaded successfully from {checkpoint_path}")
     else:
         print("Model checkpoint not found!")
-    agent.eval()
-    return agent
+    declarer_agent.eval()
+    defender_agent.eval()
+    return declarer_agent, defender_agent
 
-def play_games(agent, env, device, num_games=1000, opponents="agent"):
+def play_games(declarer_agent, defender_agent, env, device, num_games=1000, opponents="agent"):
     # opponents can be "agent", "random", or "heuristic"
     heuristic_bot = HeuristicAgent()
     
@@ -38,23 +43,34 @@ def play_games(agent, env, device, num_games=1000, opponents="agent"):
             if current_player == 0 or opponents == "agent":
                 # Neural Network Decision
                 with torch.no_grad():
-                    is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
-                    
-                    if env.phase == "drop_talon":
-                        mode = "Talon"
+                    is_declarer = 1.0 if (env.auction and env.auction.highest_bidder == current_player) else 0.0
+                    if env.auction and env.auction.highest_bidder is None:
+                        is_declarer = 0.0
+                        
+                    if env.phase == "talon":
+                        mode = "talon"
+                        active_agent = declarer_agent
                     elif env.phase == "decision_to_rob" or env.phase == "bidding":
                         mode = "decision_to_rob" if env.phase == "decision_to_rob" else "normal"
+                        active_agent = declarer_agent
                     else:
-                        contract = env.auction.highest_bid.name.lower() if env.auction.highest_bid else "passz"
-                        if "betli" in contract:
-                            mode = "betli"
-                        elif "durchmars" in contract:
-                            mode = "durchmars"
+                        bid = env.auction.highest_bid
+                        if bid is not None and bid.id != 0:
+                            if bid.is_betli:
+                                mode = "betli"
+                            elif bid.is_durchmars:
+                                mode = "durchmars"
+                            elif bid.has_ulti:
+                                mode = "ulti"
+                            else:
+                                mode = "normal"
                         else:
                             mode = "normal"
                             
-                    action, _, _, _ = agent.get_action_and_value(
-                        obs, is_declarer, mode=mode, action_mask=torch.tensor(mask, device=device)
+                        active_agent = declarer_agent if is_declarer == 1.0 else defender_agent
+                            
+                    action, _, _, _ = active_agent.get_action_and_value(
+                        obs, mode=mode, action_mask=torch.tensor(mask, device=device)
                     )
                     action = action.item()
             elif opponents == "random":

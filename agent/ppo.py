@@ -14,10 +14,12 @@ class PPOMultiHeadAgent(nn.Module):
         # LSTM processes sequence of 30 tricks
         self.lstm = nn.LSTM(input_size=16, hidden_size=64, batch_first=True)
         
-        # Flat dims: hand(32) + flags(12) + trump(4) + lead(4) + scores(2) + is_declarer(1) = 55
-        # Plus LSTM output(64) = 119
-        # Plus Belief State flattened (4 * 32 = 128) = 247
-        obs_dim = 246
+        # obs_dim breakdown:
+        # hand(32) + flags(12) + trump(4) + lead(4) + scores(2) = 54
+        # + LSTM output(64) = 118
+        # + Belief State flattened (4 * 32 = 128) = 246
+        # + Public Belief State flattened (4 * 32 = 128) = 374
+        obs_dim = 374
         
         self.feature_extractor = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
@@ -35,6 +37,10 @@ class PPOMultiHeadAgent(nn.Module):
         self.policy_talon = nn.Linear(hidden_dim, action_dim)
         self.policy_rob = nn.Linear(hidden_dim, action_dim)
         
+        # Autoregressive talon: second card discard uses context from first card
+        self.talon_context_embedding = nn.Embedding(33, 16)  # 32 cards + "no card yet" (32)
+        self.policy_talon_2 = nn.Linear(hidden_dim + 16, action_dim)
+        
     def _preprocess(self, obs_dict: Dict[str, Any]) -> torch.Tensor:
         model_device = next(self.parameters()).device
         hand = torch.as_tensor(obs_dict["hand"], dtype=torch.float32, device=model_device)
@@ -43,6 +49,7 @@ class PPOMultiHeadAgent(nn.Module):
         lead_suit = torch.as_tensor(obs_dict["lead_suit"], dtype=torch.float32, device=model_device)
         scores = torch.as_tensor(obs_dict["scores"], dtype=torch.float32, device=model_device)
         belief_state = torch.as_tensor(obs_dict["belief_state"], dtype=torch.float32, device=model_device)
+        public_belief_state = torch.as_tensor(obs_dict["public_belief_state"], dtype=torch.float32, device=model_device)
         
         # Trick history processing
         history = torch.as_tensor(obs_dict["trick_history"], dtype=torch.long, device=model_device)
@@ -56,7 +63,7 @@ class PPOMultiHeadAgent(nn.Module):
             scores = scores.unsqueeze(0)
             history = history.unsqueeze(0)
             belief_state = belief_state.unsqueeze(0)
-            
+            public_belief_state = public_belief_state.unsqueeze(0)
 
         
         # LSTM Processing
@@ -66,8 +73,9 @@ class PPOMultiHeadAgent(nn.Module):
         lstm_out, _ = self.lstm(emb_history)       # Shape: (batch, 30, 64)
         lstm_final = lstm_out[:, -1, :]            # Take final hidden state
         
-        # Flatten belief state (batch, 4, 32) -> (batch, 128)
+        # Flatten belief states (batch, 4, 32) -> (batch, 128)
         belief_flat = belief_state.view(belief_state.size(0), -1)
+        public_belief_flat = public_belief_state.view(public_belief_state.size(0), -1)
         
         x = torch.cat([
             hand.float(),
@@ -76,7 +84,8 @@ class PPOMultiHeadAgent(nn.Module):
             lead_suit.float(),
             scores,
             lstm_final,
-            belief_flat
+            belief_flat,
+            public_belief_flat
         ], dim=-1)
         return x
 
@@ -93,6 +102,18 @@ class PPOMultiHeadAgent(nn.Module):
             logits = self.policy_ulti(features)
         elif mode == "talon":
             logits = self.policy_talon(features)
+        elif mode == "talon_2":
+            # Autoregressive: embed the first dropped card and concat to features
+            model_device = next(self.parameters()).device
+            talon_first = torch.as_tensor(obs_dict["talon_first_drop"], dtype=torch.long, device=model_device)
+            if talon_first.dim() == 1 and talon_first.size(0) == 1:
+                # Single sample, shape (1,) -> needs to stay (1,)
+                pass
+            elif talon_first.dim() == 2:
+                talon_first = talon_first.squeeze(-1)
+            context_emb = self.talon_context_embedding(talon_first)  # (batch, 16)
+            combined = torch.cat([features, context_emb], dim=-1)  # (batch, hidden_dim + 16)
+            logits = self.policy_talon_2(combined)
         elif mode == "decision_to_rob":
             logits = self.policy_rob(features)
         else:

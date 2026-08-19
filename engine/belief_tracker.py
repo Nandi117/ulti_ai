@@ -12,9 +12,18 @@ class BeliefTracker:
         self.definite = np.zeros((3, 4, 32), dtype=bool)
         self.capacities = np.array([0, 0, 0, 0], dtype=np.int8)
         
+        # Public belief: what any observer knows from public actions only
+        # Shape: (4, 32) — constraints on where each card could be
+        self.public_constraints = np.ones((4, 32), dtype=bool)
+        self.public_played = np.zeros(32, dtype=bool)  # Cards that have been played publicly
+        
     def reset_deal(self, hands: List[np.ndarray], starting_player: int):
         self.constraints.fill(True)
         self.definite.fill(False)
+        
+        # Reset public belief
+        self.public_constraints.fill(True)
+        self.public_played.fill(False)
         
         sizes = [10, 10, 10]
         sizes[starting_player] = 12
@@ -84,12 +93,14 @@ class BeliefTracker:
         for c in range(32):
             if ALL_CARDS[c].suit == suit:
                 self.constraints[:, player_id, c] = False
+                self.public_constraints[player_id, c] = False  # Public knowledge too
                 
     def mark_cannot_overtrick(self, player_id: int, suit: Suit, max_rank_value: int):
         """Public knowledge: player_id cannot beat the given rank value in this suit."""
         for c in range(32):
             if ALL_CARDS[c].suit == suit and ALL_CARDS[c].rank.value > max_rank_value:
                 self.constraints[:, player_id, c] = False
+                self.public_constraints[player_id, c] = False  # Public knowledge too
                 
     def mark_public_knowledge(self, player_id: int, card_idx: int):
         """A player announces 40/20, revealing they hold this card."""
@@ -106,6 +117,10 @@ class BeliefTracker:
             for t in range(4):
                 self.definite[viewer, t, card_idx] = False
                 self.constraints[viewer, t, card_idx] = False
+        # Public: card is now played (visible to all), remove from all locations
+        self.public_played[card_idx] = True
+        for t in range(4):
+            self.public_constraints[t, card_idx] = False
 
     def get_probabilities(self, viewer_id: int) -> np.ndarray:
         """Returns 4x32 matrix of probabilities from the perspective of viewer_id."""
@@ -139,3 +154,34 @@ class BeliefTracker:
                     probs[t, c] = eff_cap[t] / total_weight
                     
         return probs
+
+    def get_public_probabilities(self, target_player: int) -> np.ndarray:
+        """Returns 4x32 matrix: what ANY observer would believe about all players' hands
+        based solely on public information (cards played, voids revealed, marriages announced).
+        
+        This is the 'Public Belief State' that enables bluffing — the agent can see
+        what the opponents think about its hand based on its public actions."""
+        probs = np.zeros((4, 32), dtype=np.float32)
+        
+        # Use current capacities for weighting
+        eff_cap = self.capacities.copy().astype(np.float32)
+        
+        for c in range(32):
+            # Skip played cards
+            if self.public_played[c]:
+                continue
+                
+            # Distribute based on public constraints and capacity
+            valid_targets = []
+            total_weight = 0.0
+            for t in range(4):
+                if self.public_constraints[t, c] and eff_cap[t] > 0:
+                    valid_targets.append(t)
+                    total_weight += eff_cap[t]
+                    
+            if total_weight > 0:
+                for t in valid_targets:
+                    probs[t, c] = eff_cap[t] / total_weight
+                    
+        return probs
+

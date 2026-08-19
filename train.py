@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from engine.environments.ulti import UltiEnv
 from agent.ppo import PPOMultiHeadAgent, ParallelReplayBuffer
-from agent.baselines.heuristic import HeuristicAgent
+from agent.league import League
 
 def load_hyperparams(path):
     with open(path, "r") as f:
@@ -59,7 +59,8 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
     # Prepare Dict of Tensors for observation
     b_obs_merged = {
         "hand": [], "trick_history": [], "deduction_flags": [], 
-        "trump_suit": [], "lead_suit": [], "scores": [], "belief_state": []
+        "trump_suit": [], "lead_suit": [], "scores": [], 
+        "belief_state": [], "public_belief_state": [], "talon_first_drop": []
     }
     
     for obs in b_obs_dicts:
@@ -70,9 +71,14 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
         b_obs_merged["lead_suit"].append(obs["lead_suit"])
         b_obs_merged["scores"].append(obs["scores"])
         b_obs_merged["belief_state"].append(obs["belief_state"])
+        b_obs_merged["public_belief_state"].append(obs["public_belief_state"])
+        b_obs_merged["talon_first_drop"].append(obs["talon_first_drop"])
         
     for k in b_obs_merged.keys():
-        b_obs_merged[k] = torch.tensor(np.array(b_obs_merged[k]), dtype=torch.float32, device=device)
+        if k == "talon_first_drop":
+            b_obs_merged[k] = torch.tensor(np.array(b_obs_merged[k]), dtype=torch.long, device=device)
+        else:
+            b_obs_merged[k] = torch.tensor(np.array(b_obs_merged[k]), dtype=torch.float32, device=device)
         
     b_masks = torch.tensor(np.array(b_masks), dtype=torch.bool, device=device)
     
@@ -83,10 +89,6 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
     total_e_loss = 0
     
     for epoch in range(params["ppo_epochs"]):
-        # Since we use mode switches, we must process sample by sample or group by mode.
-        # For simplicity, we can do a forward pass sample by sample in a loop, or just pass normal.
-        # Grouping by mode is much faster.
-        
         mode_indices = defaultdict(list)
         for i, m in enumerate(b_modes):
             mode_indices[m].append(i)
@@ -159,9 +161,28 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
     
     return total_a_loss, total_c_loss, total_e_loss
 
+
+def compute_bid_bonus(total_eps):
+    """Reward shaping: bonus for bidding, decays linearly to 0."""
+    if total_eps < 50_000:
+        return 1.0
+    elif total_eps < 200_000:
+        return 1.0 - ((total_eps - 50_000) / 150_000)
+    else:
+        return 0.0
+
+
+def compute_force_exploration_rate(total_eps):
+    """Exploration curriculum: force rate decays linearly to 0."""
+    if total_eps < 300_000:
+        return 1.0 - (total_eps / 300_000)
+    else:
+        return 0.0
+
+
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Starting Multi-Phase Curriculum Training on {device} (Two-Brain Split Architecture)...")
+    print(f"Starting v2 Training: Public Belief + Autoregressive Talon + League + Reward Shaping on {device}...")
     
     hyperparams_file = "config/hyperparams.json"
     params = load_hyperparams(hyperparams_file)
@@ -169,6 +190,7 @@ def train():
     declarer_agent = PPOMultiHeadAgent().to(device)
     defender_agent = PPOMultiHeadAgent().to(device)
     
+    # Try loading checkpoint (will fail on obs_dim mismatch for old models — that's expected)
     checkpoint_path = r'C:\ulti_ai\models\agent_checkpoint_split.pth'
     if os.path.exists(checkpoint_path):
         try:
@@ -177,25 +199,32 @@ def train():
             defender_agent.load_state_dict(state_dict['defender'])
             print("Successfully loaded pre-trained split-brain checkpoint!")
         except Exception as e:
-            print(f"Could not load checkpoint: {e}. Starting from scratch.")
+            print(f"Could not load checkpoint (expected for new architecture): {e}")
+            print("Starting fresh training with v2 architecture.")
     else:
-        print("No checkpoint found. Starting from scratch.")
+        print("No checkpoint found. Starting fresh training with v2 architecture.")
         
     opt_decl = optim.Adam(declarer_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     opt_def = optim.Adam(defender_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     
-    run_name = f"split_brain_{int(time.time())}"
+    run_name = f"v2_league_{int(time.time())}"
     writer = SummaryWriter(f"logs/tb/{run_name}")
     print(f"Tensorboard logs saving to logs/tb/{run_name}")
     
     buffer_decl = ParallelReplayBuffer()
     buffer_def = ParallelReplayBuffer()
     
-    heuristic = HeuristicAgent()
+    # League Training: pool of frozen past selves
+    league = League(max_snapshots=params.get("fictitious_play_history_size", 10))
+    league_prob = params.get("fictitious_play_prob", 0.2)
+    league_opponent_decl = None
+    league_opponent_def = None
+    use_league_this_episode = False
+    
     env = UltiEnv(curriculum_mode=False, training_filter_mode=True)
     
     global_step = 0
-    phase = 3
+    total_eps = 0
     
     mode_eps = defaultdict(int)
     mode_wins = defaultdict(int)
@@ -203,9 +232,20 @@ def train():
     cumulative_mode_wins = defaultdict(int)
     recent_games = deque(maxlen=2000)
     
+    # Reward tracking for TensorBoard
+    declarer_rewards_window = deque(maxlen=100)
+    defender_rewards_window = deque(maxlen=100)
+    
+    # League snapshot interval
+    league_snapshot_interval = 5000
+    last_league_snapshot_eps = 0
+    
     obs, info = env.reset()
     episode_traj_decl = {0: [], 1: [], 2: []}
     episode_traj_def = {0: [], 1: [], 2: []}
+    
+    # Decide if this first episode uses league opponents
+    use_league_this_episode = False  # No snapshots yet
     
     last_print = time.time()
     
@@ -213,17 +253,21 @@ def train():
         current_player = env.current_player
         is_declarer = 1.0 if env.auction.highest_bidder == current_player else 0.0
         
-        # Bidding uses Declarer Brain, playing as declarer uses Declarer Brain.
-        # Playing as defender uses Defender Brain.
-        
+        # Determine mode and active agent
         if env.phase == "drop_talon":
             dash_mode = "Talon"
-            nn_mode = "talon"
+            # Autoregressive talon: use "talon" for first card, "talon_2" for second
+            if env.talon_first_drop == 32:
+                nn_mode = "talon"
+            else:
+                nn_mode = "talon_2"
             active_agent = declarer_agent
+            is_league_player = False
         elif env.phase == "decision_to_rob" or env.phase == "bidding":
             dash_mode = "Robbing" if env.phase == "decision_to_rob" else "Bidding"
             nn_mode = "decision_to_rob" if env.phase == "decision_to_rob" else "normal"
             active_agent = declarer_agent
+            is_league_player = False
         else:
             dash_mode = "Passz"
             nn_mode = "normal"
@@ -239,7 +283,13 @@ def train():
                 else:
                     nn_mode = "normal"
             
-            active_agent = declarer_agent if is_declarer == 1.0 else defender_agent
+            # League training: for opponent players, possibly use a frozen past agent
+            if use_league_this_episode and current_player != 0 and league_opponent_decl is not None:
+                active_agent = league_opponent_decl if is_declarer == 1.0 else league_opponent_def
+                is_league_player = True
+            else:
+                active_agent = declarer_agent if is_declarer == 1.0 else defender_agent
+                is_league_player = False
             
         if dash_mode not in mode_eps:
             mode_eps[dash_mode] = 0
@@ -247,7 +297,6 @@ def train():
             mode_wins[dash_mode] = 0
             
         mask = info["action_mask"]
-        legal_actions = [i for i, m in enumerate(mask) if m]
         
         with torch.no_grad():
             action, logprob, entropy, value = active_agent.get_action_and_value(
@@ -259,15 +308,19 @@ def train():
         
         next_obs, reward, terminated, truncated, info = env.step(action_item)
         
-        if active_agent == declarer_agent:
-            episode_traj_decl[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
-        else:
-            episode_traj_def[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
+        # Only store trajectories for the LEARNING agents (not league opponents)
+        if not is_league_player:
+            if active_agent == declarer_agent:
+                episode_traj_decl[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
+            else:
+                episode_traj_def[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
             
         obs = next_obs
         global_step += 1
         
         if terminated or truncated:
+            total_eps += 1
+            
             if dash_mode not in cumulative_mode_eps:
                 cumulative_mode_eps[dash_mode] = 0
                 cumulative_mode_wins[dash_mode] = 0
@@ -280,42 +333,94 @@ def train():
                 recent_games.append((dash_mode, True))
             else:
                 recent_games.append((dash_mode, False))
-                
-            # Process Declarer trajectories
+            
+            # === REWARD SHAPING ===
+            bid_bonus = compute_bid_bonus(total_eps)
+            bid = env.auction.highest_bid
+            bonus = 0.0
+            if bid is not None and bid.id != 0:
+                # Normalize: bid.points ranges from ~2 to 12, normalize to 0-1
+                bonus = bid_bonus * (bid.points / 12.0)
+            
+            # === Process Declarer trajectories ===
+            ep_decl_reward = 0.0
             for p_id, traj in episode_traj_decl.items():
                 for i, transition in enumerate(traj):
                     obs_t, action_t, logprob_t, value_t, mask_t, mode_t = transition
                     if i == len(traj) - 1:
-                        step_reward = reward if env.auction.highest_bidder == p_id else -reward
+                        base_reward = reward if env.auction.highest_bidder == p_id else -reward
+                        # Apply bid bonus ONLY to the declarer (the one who bid)
+                        if env.auction.highest_bidder == p_id and bid is not None and bid.id != 0:
+                            step_reward = base_reward + bonus
+                        else:
+                            step_reward = base_reward
                         step_done = True
+                        ep_decl_reward = step_reward
                     else:
                         step_reward = 0.0
                         step_done = False
                     buffer_decl.push(obs_t, action_t, logprob_t, step_reward, value_t, step_done, mask_t, mode_t)
             
-            # Process Defender trajectories
+            # === Process Defender trajectories ===
+            ep_def_reward = 0.0
             for p_id, traj in episode_traj_def.items():
                 for i, transition in enumerate(traj):
                     obs_t, action_t, logprob_t, value_t, mask_t, mode_t = transition
                     if i == len(traj) - 1:
-                        step_reward = -reward # Since they are defenders, their reward is inverted
+                        step_reward = -reward  # Defenders: inverted reward
                         step_done = True
+                        ep_def_reward = step_reward
                     else:
                         step_reward = 0.0
                         step_done = False
                     buffer_def.push(obs_t, action_t, logprob_t, step_reward, value_t, step_done, mask_t, mode_t)
             
-            # Reset
+            # Track rewards for TensorBoard
+            declarer_rewards_window.append(ep_decl_reward)
+            defender_rewards_window.append(ep_def_reward)
+            
+            # === TensorBoard Reward Curves ===
+            if total_eps % 100 == 0:
+                avg_decl = sum(declarer_rewards_window) / max(1, len(declarer_rewards_window))
+                avg_def = sum(defender_rewards_window) / max(1, len(defender_rewards_window))
+                writer.add_scalar("Reward/Declarer_Avg100", avg_decl, total_eps)
+                writer.add_scalar("Reward/Defender_Avg100", avg_def, total_eps)
+                writer.add_scalar("Curriculum/BidBonus", bid_bonus, total_eps)
+                force_rate = compute_force_exploration_rate(total_eps)
+                writer.add_scalar("Curriculum/ForceExplorationRate", force_rate, total_eps)
+                writer.add_scalar("League/SnapshotCount", len(league), total_eps)
+            
+            # Reset episode
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
+            
+            # === Exploration Curriculum: update force rate ===
+            force_rate = compute_force_exploration_rate(total_eps)
+            env.force_high_game = (random.random() < force_rate) and env.training_filter_mode
+            
             obs, info = env.reset()
+            
+            # === League: decide if next episode uses league opponents ===
+            if league.has_opponents() and random.random() < league_prob:
+                use_league_this_episode = True
+                league_opponent_decl, league_opponent_def = league.sample_opponent(device)
+            else:
+                use_league_this_episode = False
+                league_opponent_decl = None
+                league_opponent_def = None
+            
+            # === League: save snapshot periodically ===
+            if total_eps - last_league_snapshot_eps >= league_snapshot_interval:
+                league.add_snapshot(declarer_agent, defender_agent)
+                last_league_snapshot_eps = total_eps
+                print(f"[League] Saved snapshot #{len(league)} at episode {total_eps}")
             
             # Update Agents
             if len(buffer_decl) >= params["update_frequency"]:
                 update_agent(declarer_agent, opt_decl, buffer_decl, params, writer, global_step, prefix="Declarer")
                 buffer_decl.reset()
                 
-                # Save checkpoint (we can save both into the same dict, or separate files)
+                # Save checkpoint
                 torch.save({
                     'declarer': declarer_agent.state_dict(),
                     'defender': defender_agent.state_dict()
@@ -329,7 +434,6 @@ def train():
             if not hasattr(env, 'last_json_dump_episodes'):
                 env.last_json_dump_episodes = 0
             
-            total_eps = sum(cumulative_mode_eps.values())
             if total_eps - env.last_json_dump_episodes > 100:
                 env.last_json_dump_episodes = total_eps
                 percentages = {}
@@ -342,19 +446,19 @@ def train():
                     else:
                         win_rates[m] = 0.0
                         
-                recent_eps = defaultdict(int)
-                recent_wins = defaultdict(int)
+                recent_eps_dict = defaultdict(int)
+                recent_wins_dict = defaultdict(int)
                 for mode, won in recent_games:
-                    recent_eps[mode] += 1
+                    recent_eps_dict[mode] += 1
                     if won:
-                        recent_wins[mode] += 1
+                        recent_wins_dict[mode] += 1
                         
                 recent_percentages = {}
                 recent_win_rates = {}
                 total_recent = len(recent_games)
-                for m in recent_eps.keys():
-                    recent_percentages[m] = (recent_eps[m] / max(1, total_recent)) * 100
-                    recent_win_rates[m] = (recent_wins[m] / recent_eps[m]) * 100
+                for m in recent_eps_dict.keys():
+                    recent_percentages[m] = (recent_eps_dict[m] / max(1, total_recent)) * 100
+                    recent_win_rates[m] = (recent_wins_dict[m] / recent_eps_dict[m]) * 100
                         
                 with open("logs/bidding_percentages.json", "w") as f:
                     json.dump({
@@ -363,11 +467,11 @@ def train():
                         "totals": cumulative_mode_eps,
                         "recent_percentages": recent_percentages,
                         "recent_win_rates": recent_win_rates,
-                        "recent_totals": recent_eps
+                        "recent_totals": recent_eps_dict
                     }, f)
                     
             if time.time() - last_print > 5:
-                print(f"Step: {global_step} | Total Episodes: {total_eps}")
+                print(f"Step: {global_step} | Eps: {total_eps} | Bid Bonus: {compute_bid_bonus(total_eps):.2f} | Force Rate: {compute_force_exploration_rate(total_eps):.2f} | League: {len(league)} snapshots")
                 for m in mode_eps.keys():
                     if mode_eps[m] > 0:
                         print(f"  {m} | WR: {mode_wins[m]/mode_eps[m]:.2f}")

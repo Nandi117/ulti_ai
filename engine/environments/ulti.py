@@ -26,7 +26,9 @@ class UltiEnv(gym.Env):
             "trump_suit": spaces.MultiBinary(4),
             "lead_suit": spaces.MultiBinary(4),
             "scores": spaces.Box(low=0, high=120, shape=(2,), dtype=np.float32),
-            "belief_state": spaces.Box(low=0.0, high=1.0, shape=(4, 32), dtype=np.float32)
+            "belief_state": spaces.Box(low=0.0, high=1.0, shape=(4, 32), dtype=np.float32),
+            "public_belief_state": spaces.Box(low=0.0, high=1.0, shape=(4, 32), dtype=np.float32),
+            "talon_first_drop": spaces.Discrete(33)  # 0-31 = card_id, 32 = "not yet dropped"
         })
         
         # Setup attributes
@@ -46,6 +48,7 @@ class UltiEnv(gym.Env):
         self.declarer_points = 0
         self.defenders_points = 0
         self.declarer_had_4_aces = False
+        self.talon_first_drop = 32  # 32 = "not yet dropped"
 
     def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[dict, dict]:
         super().reset(seed=seed)
@@ -237,8 +240,10 @@ class UltiEnv(gym.Env):
             
         if hasattr(self, 'belief_tracker'):
             belief_state = self.belief_tracker.get_probabilities(self.current_player)
+            public_belief_state = self.belief_tracker.get_public_probabilities(self.current_player)
         else:
             belief_state = np.zeros((4, 32), dtype=np.float32)
+            public_belief_state = np.zeros((4, 32), dtype=np.float32)
 
         return {
             "hand": self.hands[self.current_player].copy(),
@@ -247,7 +252,9 @@ class UltiEnv(gym.Env):
             "trump_suit": trump_arr,
             "lead_suit": lead_arr,
             "scores": np.array([self.declarer_points, self.defenders_points], dtype=np.float32),
-            "belief_state": belief_state
+            "belief_state": belief_state,
+            "public_belief_state": public_belief_state,
+            "talon_first_drop": np.array([self.talon_first_drop], dtype=np.int8)
         }
 
     def _get_info(self) -> dict:
@@ -391,7 +398,11 @@ class UltiEnv(gym.Env):
             self.hands[self.current_player][action] = 0
             self.talon.append(card)
             self.cards_to_drop -= 1
+            if self.cards_to_drop == 1:
+                # First card dropped — record it for autoregressive talon
+                self.talon_first_drop = action
             if self.cards_to_drop == 0:
+                self.talon_first_drop = 32  # Reset for next phase
                 self.phase = "bidding"
                 if hasattr(self, 'belief_tracker'):
                     dropped_indices = [ALL_CARDS.index(c) for c in self.talon]

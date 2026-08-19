@@ -212,8 +212,8 @@ class UltiEnv(gym.Env):
         self.belief_tracker = BeliefTracker()
         self.belief_tracker.reset_deal(self.hands, starting_player=0)
         
-        # Removed forced exploration rule for Phase 3 (pure RL)
-        self.force_high_game = False
+        # Only force exploration on exceptional hands if we are in training filter mode
+        self.force_high_game = getattr(self, 'training_filter_mode', False)
         
         return self._get_obs(), self._get_info()
 

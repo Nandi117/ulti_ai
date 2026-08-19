@@ -11,22 +11,19 @@ HTML_CONTENT = """
     <title>Live Bidding Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        body { font-family: -apple-system, sans-serif; background: #1e1e1e; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: auto; margin: 0; padding: 20px 0; }
         .dashboard { display: flex; width: 90vw; max-width: 1200px; justify-content: space-around; align-items: center; margin-top: 20px; }
         .chart-container { width: 45%; }
-        h1 { font-weight: 300; margin-bottom: 10px; }
-        .totals-banner { font-size: 1.1rem; color: #ccc; margin-bottom: 20px; padding: 15px; background: #2a2a2a; border-radius: 8px; width: 90vw; max-width: 1000px; display: flex; justify-content: space-around; }
+        h1 { font-weight: 300; margin-bottom: 10px; text-align: center; }
+        .totals-banner { font-size: 1.1rem; color: #ccc; margin-bottom: 20px; padding: 15px; background: #2a2a2a; border-radius: 8px; width: 90vw; max-width: 1000px; display: flex; justify-content: space-around; flex-wrap: wrap; }
         h2 { text-align: center; font-weight: 300; font-size: 1.2rem; margin-bottom: 15px; color: #aaa; }
+        hr { width: 90vw; border-color: #333; margin: 40px 0; }
     </style>
 </head>
 <body>
-    <h1>Live Agent Dashboard</h1>
+    <h1>All-Time Training Data</h1>
     <div class="totals-banner" id="totalsBanner">
-        <span>Passz: 0</span>
-        <span>Ulti: 0</span>
-        <span>Betli: 0</span>
-        <span>Durchmars: 0</span>
-        <span style="color: white; font-weight: bold;">Total: 0</span>
+        <span>Total: 0</span>
     </div>
     <div class="dashboard">
         <div class="chart-container">
@@ -38,58 +35,82 @@ HTML_CONTENT = """
             <canvas id="barChart"></canvas>
         </div>
     </div>
+    
+    <hr>
+    
+    <h1>Recent Performance (Last 2000 Games)</h1>
+    <div class="totals-banner" id="recentTotalsBanner">
+        <span>Total: 0</span>
+    </div>
+    <div class="dashboard">
+        <div class="chart-container">
+            <h2>Recent Bidding Distribution</h2>
+            <canvas id="pieChartRecent"></canvas>
+        </div>
+        <div class="chart-container">
+            <h2>Recent Win Rates</h2>
+            <canvas id="barChartRecent"></canvas>
+        </div>
+    </div>
 
     <script>
-        const ctxPie = document.getElementById('pieChart').getContext('2d');
+        function createPieChart(ctxId) {
+            return new Chart(document.getElementById(ctxId).getContext('2d'), {
+                type: 'pie',
+                data: {
+                    labels: bidNames,
+                    datasets: [{
+                        data: new Array(10).fill(0),
+                        backgroundColor: bgColors,
+                        borderWidth: 1,
+                        borderColor: '#111'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    animation: { duration: 500 },
+                    plugins: {
+                        legend: { position: 'right', labels: { color: 'white', font: { size: 14 } } },
+                        tooltip: { callbacks: { label: function(c) { return c.label + ': ' + c.raw.toFixed(1) + '%'; } } }
+                    }
+                }
+            });
+        }
+        
+        function createBarChart(ctxId) {
+            return new Chart(document.getElementById(ctxId).getContext('2d'), {
+                type: 'bar',
+                data: {
+                    labels: bidNames,
+                    datasets: [{
+                        label: 'Win Rate %',
+                        data: new Array(10).fill(0),
+                        backgroundColor: bgColors,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    animation: { duration: 500 },
+                    scales: {
+                        y: { beginAtZero: true, max: 100, ticks: { color: 'white' }, grid: { color: '#333' } },
+                        x: { ticks: { color: 'white', font: { size: 12 } }, grid: { display: false } }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: function(c) { return c.raw.toFixed(1) + '% Win Rate'; } } }
+                    }
+                }
+            });
+        }
+
         const bidNames = ['Passz', 'Piros passz', '40-100', 'Piros 40-100', 'Ulti', 'Piros ulti', 'Betli', 'Piros betli', 'Durchmars', 'Piros durchmars'];
         const bgColors = ['#cccccc', '#ff6666', '#ffb366', '#ff8000', '#ff9999', '#cc0000', '#66b3ff', '#0055ff', '#99ff99', '#00cc00'];
 
-        const pieChart = new Chart(ctxPie, {
-            type: 'pie',
-            data: {
-                labels: bidNames,
-                datasets: [{
-                    data: new Array(10).fill(0),
-                    backgroundColor: bgColors,
-                    borderWidth: 1,
-                    borderColor: '#111'
-                }]
-            },
-            options: {
-                responsive: true,
-                animation: { duration: 500 },
-                plugins: {
-                    legend: { position: 'right', labels: { color: 'white', font: { size: 14 } } },
-                    tooltip: { callbacks: { label: function(c) { return c.label + ': ' + c.raw.toFixed(1) + '%'; } } }
-                }
-            }
-        });
-
-        const ctxBar = document.getElementById('barChart').getContext('2d');
-        const barChart = new Chart(ctxBar, {
-            type: 'bar',
-            data: {
-                labels: bidNames,
-                datasets: [{
-                    label: 'Win Rate %',
-                    data: new Array(10).fill(0),
-                    backgroundColor: bgColors,
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                animation: { duration: 500 },
-                scales: {
-                    y: { beginAtZero: true, max: 100, ticks: { color: 'white' }, grid: { color: '#333' } },
-                    x: { ticks: { color: 'white', font: { size: 12 } }, grid: { display: false } }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { callbacks: { label: function(c) { return c.raw.toFixed(1) + '% Win Rate'; } } }
-                }
-            }
-        });
+        const pieChart = createPieChart('pieChart');
+        const barChart = createBarChart('barChart');
+        const pieChartRecent = createPieChart('pieChartRecent');
+        const barChartRecent = createBarChart('barChartRecent');
 
         function updateData() {
             fetch('/data')
@@ -99,21 +120,39 @@ HTML_CONTENT = """
                     const w = data.win_rates || {};
                     const t = data.totals || {};
                     
+                    const rp = data.recent_percentages || {};
+                    const rw = data.recent_win_rates || {};
+                    const rt = data.recent_totals || {};
+                    
                     pieChart.data.datasets[0].data = bidNames.map(name => p[name] || 0);
                     pieChart.update();
                     
                     barChart.data.datasets[0].data = bidNames.map(name => w[name] || 0);
                     barChart.update();
                     
+                    pieChartRecent.data.datasets[0].data = bidNames.map(name => rp[name] || 0);
+                    pieChartRecent.update();
+                    
+                    barChartRecent.data.datasets[0].data = bidNames.map(name => rw[name] || 0);
+                    barChartRecent.update();
+                    
                     let totalsHtml = '';
                     let totalGames = 0;
                     bidNames.forEach(name => {
                         const count = t[name] || 0;
                         totalGames += count;
-                        totalsHtml += `<span>${name}: ${count.toLocaleString()}</span>`;
+                        if (count > 0) totalsHtml += `<span>${name}: ${count.toLocaleString()}</span>`;
                     });
-                    
                     document.getElementById('totalsBanner').innerHTML = totalsHtml + `<span><b>Total: ${totalGames.toLocaleString()}</b></span>`;
+                    
+                    let recentTotalsHtml = '';
+                    let recentTotalGames = 0;
+                    bidNames.forEach(name => {
+                        const count = rt[name] || 0;
+                        recentTotalGames += count;
+                        if (count > 0) recentTotalsHtml += `<span>${name}: ${count.toLocaleString()}</span>`;
+                    });
+                    document.getElementById('recentTotalsBanner').innerHTML = recentTotalsHtml + `<span><b>Recent Total: ${recentTotalGames.toLocaleString()}</b></span>`;
                 })
                 .catch(err => console.error(err));
         }

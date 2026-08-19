@@ -70,6 +70,9 @@ def evaluate_hand_for_bids(hand_cards: List[Card], force_high_game: bool = False
     can_play_ulti = False
     can_play_piros_ulti = False
     
+    exceptional_ulti = False
+    exceptional_piros_ulti = False
+    
     for suit in Suit:
         suit_cards = [c for c in hand_cards if c.suit == suit]
         has_vii = any(c.rank == Rank.SEVEN for c in suit_cards)
@@ -81,20 +84,33 @@ def evaluate_hand_for_bids(hand_cards: List[Card], force_high_game: bool = False
             else:
                 can_play_ulti = True
                 
+        # Exceptional Ulti: 7, Ace, and at least 5 trumps total
+        if has_vii and has_ace and len(suit_cards) >= 5:
+            if suit == Suit.HEARTS:
+                exceptional_piros_ulti = True
+            else:
+                exceptional_ulti = True
+                
     if not can_play_ulti:
         allowed["ulti"] = False
     if not can_play_piros_ulti:
         allowed["piros ulti"] = False
+        
+    # Exceptional Checks
+    exceptional_betli = (high_cards_count == 0) # Only 7s, 8s, 9s, 10s, Unders
+    exceptional_durchmars = (len(aces) == 4 and len(kings) >= 2)
+    exceptional_40_100 = len(suits_with_marriage) >= 1 and len(aces) >= 3
+    
     if force_high_game:
-        any_high_game_allowed = False
-        for game, is_allowed in allowed.items():
-            if game not in ["passz", "piros passz"] and is_allowed:
-                any_high_game_allowed = True
-                break
-                
-        if any_high_game_allowed:
+        # We only force passing OFF if the hand is mathematically exceptional (80-95% win rate)
+        # This guarantees the agent gets positive reinforcement for bidding high games.
+        if exceptional_betli or exceptional_durchmars or exceptional_ulti or exceptional_piros_ulti or exceptional_40_100:
             allowed["passz"] = False
             allowed["piros passz"] = False
+            
+            # Optionally, we can also force them into the SPECIFIC exceptional game
+            # to make learning even faster, but just banning passz is enough since
+            # the action mask will still allow the good bids.
 
     return allowed
 

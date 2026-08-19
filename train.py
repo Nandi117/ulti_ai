@@ -4,7 +4,7 @@ import json
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from collections import defaultdict
+from collections import defaultdict, deque
 import numpy as np
 import random
 from torch.utils.tensorboard import SummaryWriter
@@ -169,6 +169,18 @@ def train():
     declarer_agent = PPOMultiHeadAgent().to(device)
     defender_agent = PPOMultiHeadAgent().to(device)
     
+    checkpoint_path = r'C:\ulti_ai\models\agent_checkpoint_split.pth'
+    if os.path.exists(checkpoint_path):
+        try:
+            state_dict = torch.load(checkpoint_path, map_location=device)
+            declarer_agent.load_state_dict(state_dict['declarer'])
+            defender_agent.load_state_dict(state_dict['defender'])
+            print("Successfully loaded pre-trained split-brain checkpoint!")
+        except Exception as e:
+            print(f"Could not load checkpoint: {e}. Starting from scratch.")
+    else:
+        print("No checkpoint found. Starting from scratch.")
+        
     opt_decl = optim.Adam(declarer_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     opt_def = optim.Adam(defender_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
     
@@ -189,6 +201,7 @@ def train():
     mode_wins = defaultdict(int)
     cumulative_mode_eps = defaultdict(int)
     cumulative_mode_wins = defaultdict(int)
+    recent_games = deque(maxlen=2000)
     
     obs, info = env.reset()
     episode_traj_decl = {0: [], 1: [], 2: []}
@@ -264,6 +277,9 @@ def train():
             if reward > 0:
                 mode_wins[dash_mode] += 1
                 cumulative_mode_wins[dash_mode] += 1
+                recent_games.append((dash_mode, True))
+            else:
+                recent_games.append((dash_mode, False))
                 
             # Process Declarer trajectories
             for p_id, traj in episode_traj_decl.items():
@@ -326,11 +342,28 @@ def train():
                     else:
                         win_rates[m] = 0.0
                         
+                recent_eps = defaultdict(int)
+                recent_wins = defaultdict(int)
+                for mode, won in recent_games:
+                    recent_eps[mode] += 1
+                    if won:
+                        recent_wins[mode] += 1
+                        
+                recent_percentages = {}
+                recent_win_rates = {}
+                total_recent = len(recent_games)
+                for m in recent_eps.keys():
+                    recent_percentages[m] = (recent_eps[m] / max(1, total_recent)) * 100
+                    recent_win_rates[m] = (recent_wins[m] / recent_eps[m]) * 100
+                        
                 with open("logs/bidding_percentages.json", "w") as f:
                     json.dump({
                         "percentages": percentages, 
                         "win_rates": win_rates,
-                        "totals": cumulative_mode_eps
+                        "totals": cumulative_mode_eps,
+                        "recent_percentages": recent_percentages,
+                        "recent_win_rates": recent_win_rates,
+                        "recent_totals": recent_eps
                     }, f)
                     
             if time.time() - last_print > 5:

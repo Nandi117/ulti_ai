@@ -17,7 +17,7 @@ class PPOMultiHeadAgent(nn.Module):
         # Flat dims: hand(32) + flags(12) + trump(4) + lead(4) + scores(2) + is_declarer(1) = 55
         # Plus LSTM output(64) = 119
         # Plus Belief State flattened (4 * 32 = 128) = 247
-        obs_dim = 247
+        obs_dim = 246
         
         self.feature_extractor = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
@@ -35,7 +35,7 @@ class PPOMultiHeadAgent(nn.Module):
         self.policy_talon = nn.Linear(hidden_dim, action_dim)
         self.policy_rob = nn.Linear(hidden_dim, action_dim)
         
-    def _preprocess(self, obs_dict: Dict[str, Any], is_declarer: Union[float, int, torch.Tensor]) -> torch.Tensor:
+    def _preprocess(self, obs_dict: Dict[str, Any]) -> torch.Tensor:
         model_device = next(self.parameters()).device
         hand = torch.as_tensor(obs_dict["hand"], dtype=torch.float32, device=model_device)
         deduction_flags = torch.as_tensor(obs_dict["deduction_flags"], dtype=torch.float32, device=model_device)
@@ -57,21 +57,7 @@ class PPOMultiHeadAgent(nn.Module):
             history = history.unsqueeze(0)
             belief_state = belief_state.unsqueeze(0)
             
-            if not isinstance(is_declarer, torch.Tensor):
-                is_declarer = torch.tensor([is_declarer], dtype=torch.float32, device=model_device).unsqueeze(0)
-            elif is_declarer.dim() == 1:
-                is_declarer = is_declarer.to(model_device).unsqueeze(0)
-            else:
-                is_declarer = is_declarer.to(model_device)
-        else:
-            if not isinstance(is_declarer, torch.Tensor):
-                is_declarer = torch.tensor(is_declarer, dtype=torch.float32, device=model_device).view(-1, 1)
-            elif is_declarer.dim() == 1:
-                is_declarer = is_declarer.to(model_device).view(-1, 1)
-            else:
-                is_declarer = is_declarer.to(model_device)
-                
-        is_declarer = is_declarer.float()
+
         
         # LSTM Processing
         # Map -1 to 32 (padding token index)
@@ -89,14 +75,13 @@ class PPOMultiHeadAgent(nn.Module):
             trump_suit.float(),
             lead_suit.float(),
             scores,
-            is_declarer,
             lstm_final,
             belief_flat
         ], dim=-1)
         return x
 
-    def forward(self, obs_dict: Dict[str, torch.Tensor], is_declarer: Union[float, int, torch.Tensor], mode: str = "normal", action_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = self._preprocess(obs_dict, is_declarer)
+    def forward(self, obs_dict: Dict[str, torch.Tensor], mode: str = "normal", action_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = self._preprocess(obs_dict)
         features = self.feature_extractor(x)
         value = self.value_head(features)
         
@@ -122,8 +107,8 @@ class PPOMultiHeadAgent(nn.Module):
             
         return probs, value
         
-    def get_action_and_value(self, obs_dict: Dict[str, torch.Tensor], is_declarer: Union[float, int, torch.Tensor], mode: str = "normal", action_mask: Optional[torch.Tensor] = None, action: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        probs, value = self.forward(obs_dict, is_declarer, mode, action_mask)
+    def get_action_and_value(self, obs_dict: Dict[str, torch.Tensor], mode: str = "normal", action_mask: Optional[torch.Tensor] = None, action: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        probs, value = self.forward(obs_dict, mode, action_mask)
         
         if action_mask is not None:
             # Re-apply mask to ensure invalid actions stay exactly 0
@@ -140,3 +125,33 @@ class PPOMultiHeadAgent(nn.Module):
             action = dist.sample()
             
         return action, dist.log_prob(action), dist.entropy(), value
+
+class ParallelReplayBuffer:
+    def __init__(self):
+        self.obs = []
+        self.actions = []
+        self.logprobs = []
+        self.rewards = []
+        self.values = []
+        self.dones = []
+        self.masks = []
+        self.modes = []
+        
+    def push(self, obs, action, logprob, reward, value, done, mask, mode):
+        self.obs.append(obs)
+        self.actions.append(action)
+        self.logprobs.append(logprob)
+        self.rewards.append(reward)
+        self.values.append(value)
+        self.dones.append(done)
+        self.masks.append(mask)
+        self.modes.append(mode)
+        
+    def get_all(self):
+        return self.obs, self.actions, self.logprobs, self.rewards, self.values, self.dones, self.masks, self.modes
+        
+    def reset(self):
+        self.__init__()
+        
+    def __len__(self):
+        return len(self.rewards)

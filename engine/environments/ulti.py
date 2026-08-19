@@ -212,8 +212,8 @@ class UltiEnv(gym.Env):
         self.belief_tracker = BeliefTracker()
         self.belief_tracker.reset_deal(self.hands, starting_player=0)
         
-        # 30% chance to force the agent into a non-pass game if one is legally available
-        self.force_high_game = np.random.random() < 0.30
+        # Removed forced exploration rule for Phase 3 (pure RL)
+        self.force_high_game = False
         
         return self._get_obs(), self._get_info()
 

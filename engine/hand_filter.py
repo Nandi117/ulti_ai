@@ -39,7 +39,7 @@ def evaluate_hand_for_bids(hand_cards: List[Card], force_high_game: bool = False
         
     # Betli logic
     high_cards_count = len(aces) + len(kings) + len(overs)
-    if high_cards_count > 2 or len(aces) > 0:
+    if high_cards_count > 3 or len(aces) > 0:
         allowed["betli"] = False
         allowed["piros betli"] = False
         

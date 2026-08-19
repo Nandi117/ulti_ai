@@ -1,0 +1,31 @@
+[
+    {
+        "opponents": "agent",
+        "total_games": 1000,
+        "games_as_declarer": 999,
+        "wins": 393,
+        "win_rate": 39.33933933933934,
+        "bidding_distribution": {
+            "Passz": 999,
+            "40-100": 1
+        }
+    },
+    {
+        "opponents": "random",
+        "total_games": 1000,
+        "games_as_declarer": 52,
+        "wins": 23,
+        "win_rate": 44.230769230769226,
+        "bidding_distribution": {
+            "40-100": 94,
+            "Piros 40-100": 117,
+            "Ulti": 156,
+            "Piros passz": 136,
+            "Passz": 52,
+            "Piros durchmars": 80,
+            "Piros ulti": 114,
+            "Piros betli": 210,
+            "Betli": 41
+        }
+    }
+]

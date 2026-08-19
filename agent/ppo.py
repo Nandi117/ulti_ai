@@ -16,7 +16,8 @@ class PPOMultiHeadAgent(nn.Module):
         
         # Flat dims: hand(32) + flags(12) + trump(4) + lead(4) + scores(2) + is_declarer(1) = 55
         # Plus LSTM output(64) = 119
-        obs_dim = 119
+        # Plus Belief State flattened (4 * 32 = 128) = 247
+        obs_dim = 247
         
         self.feature_extractor = nn.Sequential(
             nn.Linear(obs_dim, hidden_dim),
@@ -41,6 +42,7 @@ class PPOMultiHeadAgent(nn.Module):
         trump_suit = torch.as_tensor(obs_dict["trump_suit"], dtype=torch.float32, device=model_device)
         lead_suit = torch.as_tensor(obs_dict["lead_suit"], dtype=torch.float32, device=model_device)
         scores = torch.as_tensor(obs_dict["scores"], dtype=torch.float32, device=model_device)
+        belief_state = torch.as_tensor(obs_dict["belief_state"], dtype=torch.float32, device=model_device)
         
         # Trick history processing
         history = torch.as_tensor(obs_dict["trick_history"], dtype=torch.long, device=model_device)
@@ -53,6 +55,7 @@ class PPOMultiHeadAgent(nn.Module):
             lead_suit = lead_suit.unsqueeze(0)
             scores = scores.unsqueeze(0)
             history = history.unsqueeze(0)
+            belief_state = belief_state.unsqueeze(0)
             
             if not isinstance(is_declarer, torch.Tensor):
                 is_declarer = torch.tensor([is_declarer], dtype=torch.float32, device=model_device).unsqueeze(0)
@@ -77,6 +80,9 @@ class PPOMultiHeadAgent(nn.Module):
         lstm_out, _ = self.lstm(emb_history)       # Shape: (batch, 30, 64)
         lstm_final = lstm_out[:, -1, :]            # Take final hidden state
         
+        # Flatten belief state (batch, 4, 32) -> (batch, 128)
+        belief_flat = belief_state.view(belief_state.size(0), -1)
+        
         x = torch.cat([
             hand.float(),
             deduction_flags.float(),
@@ -84,7 +90,8 @@ class PPOMultiHeadAgent(nn.Module):
             lead_suit.float(),
             scores,
             is_declarer,
-            lstm_final
+            lstm_final,
+            belief_flat
         ], dim=-1)
         return x
 

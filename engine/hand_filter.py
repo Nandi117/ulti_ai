@@ -2,7 +2,7 @@ from typing import List, Dict, Set
 from engine.core import Card, Suit, Rank
 from engine.bidding import ALL_BIDS
 
-def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
+def evaluate_hand_for_bids(hand_cards: List[Card], force_high_game: bool = False) -> Dict[str, bool]:
     allowed = {
         "passz": True,
         "40-100": True,
@@ -76,19 +76,30 @@ def evaluate_hand_for_bids(hand_cards: List[Card]) -> Dict[str, bool]:
         has_ace = any(c.rank == Rank.ACE for c in suit_cards)
         
         if has_vii and len(suit_cards) >= 3:
-            can_play_ulti = True
             if suit == Suit.HEARTS:
                 can_play_piros_ulti = True
+            else:
+                can_play_ulti = True
                 
     if not can_play_ulti:
         allowed["ulti"] = False
     if not can_play_piros_ulti:
         allowed["piros ulti"] = False
-        
+    if force_high_game:
+        any_high_game_allowed = False
+        for game, is_allowed in allowed.items():
+            if game not in ["passz", "piros passz"] and is_allowed:
+                any_high_game_allowed = True
+                break
+                
+        if any_high_game_allowed:
+            allowed["passz"] = False
+            allowed["piros passz"] = False
+
     return allowed
 
-def apply_hand_filter_to_mask(hand_cards: List[Card], raw_mask: List[bool]) -> List[bool]:
-    allowed_bids = evaluate_hand_for_bids(hand_cards)
+def apply_hand_filter_to_mask(hand_cards: List[Card], raw_mask: List[bool], force_high_game: bool = False) -> List[bool]:
+    allowed_bids = evaluate_hand_for_bids(hand_cards, force_high_game=force_high_game)
     filtered_mask = list(raw_mask)
     
     for i, is_legal in enumerate(raw_mask):

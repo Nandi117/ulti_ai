@@ -64,7 +64,8 @@ def update_agent(agent, optimizer, buffer, params):
         "deduction_flags": torch.tensor(np.array([o["deduction_flags"] for o in buffer.obs]), dtype=torch.float32, device=device),
         "trump_suit": torch.tensor(np.array([o["trump_suit"] for o in buffer.obs]), dtype=torch.float32, device=device),
         "lead_suit": torch.tensor(np.array([o["lead_suit"] for o in buffer.obs]), dtype=torch.float32, device=device),
-        "scores": torch.tensor(np.array([o["scores"] for o in buffer.obs]), dtype=torch.float32, device=device)
+        "scores": torch.tensor(np.array([o["scores"] for o in buffer.obs]), dtype=torch.float32, device=device),
+        "belief_state": torch.tensor(np.array([o["belief_state"] for o in buffer.obs]), dtype=torch.float32, device=device)
     }
     
     b_actions = torch.tensor(buffer.actions, dtype=torch.long, device=device)
@@ -101,7 +102,8 @@ def update_agent(agent, optimizer, buffer, params):
                 "deduction_flags": b_obs["deduction_flags"][idx_tensor],
                 "trump_suit": b_obs["trump_suit"][idx_tensor],
                 "lead_suit": b_obs["lead_suit"][idx_tensor],
-                "scores": b_obs["scores"][idx_tensor]
+                "scores": b_obs["scores"][idx_tensor],
+                "belief_state": b_obs["belief_state"][idx_tensor]
             }
             m_declarer = b_is_declarer[idx_tensor]
             m_actions = b_actions[idx_tensor]
@@ -328,6 +330,10 @@ def train():
                 action, logprob, entropy, value = agent.get_action_and_value(
                     obs, is_declarer, mode=nn_mode, action_mask=torch.tensor(mask, device=device)
                 )
+                if env.phase == "bidding":
+                    from engine.bidding import ALL_BIDS
+                    bid_made = ALL_BIDS[action.item()]
+                    print(f"AGENT BID: {bid_made.name} (ID: {bid_made.id})")
                 action_item = action.item()
                 logprob_item = logprob.item()
                 value_item = value.item()
@@ -354,6 +360,9 @@ def train():
         global_step += 1
         
         if terminated or truncated:
+            if env.auction.highest_bid is None:
+                dash_mode = "Passz"
+                
             batch_episodes += 1
             batch_rewards += reward
             mode_eps[dash_mode] += 1
@@ -384,8 +393,13 @@ def train():
                 cumulative_mode_wins = {"normal": 0, "betli": 0, "durchmars": 0, "ulti": 0}
             
             if len(buffer.obs) >= params["update_frequency"]:
+                # Optimization step (PPO)
+                agent.train()
                 a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
                 buffer.reset()
+                
+                writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
+                torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
                 
                 win_rate = batch_wins / max(1, batch_episodes)
                 recent_win_rates.append(win_rate)
@@ -450,20 +464,11 @@ def train():
                         "win_rates": win_rates,
                         "totals": cumulative_mode_eps
                     }, f)
-            
-            if len(buffer.obs) >= params["update_frequency"]:
-                # Optimization step (PPO)
-                agent.train()
-                a_loss, c_loss, e_loss = update_agent(agent, optimizer, buffer, params)
-                buffer.reset()
-                
-                writer.add_scalar("Metrics/CurriculumPhase", phase, global_step)
-                torch.save(agent.state_dict(), 'models/agent_checkpoint.pth')
-                
-                batch_episodes = 0
-                batch_wins = 0
-                batch_rewards = 0.0
-                mode_wins.clear()
+                    
+            batch_episodes = 0
+            batch_wins = 0
+            batch_rewards = 0.0
+            mode_wins.clear()
 
 if __name__ == "__main__":
     train()

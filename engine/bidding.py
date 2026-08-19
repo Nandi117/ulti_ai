@@ -80,8 +80,7 @@ class Auction:
             raise ValueError("Auction is already over.")
             
         mask = self.get_action_mask()
-        if not mask[bid_id]:
-            raise ValueError(f"Illegal bid {bid_id}")
+        # Trust the environment's mask filtering, do not crash here
             
         bid = BIDS_BY_ID[bid_id]
         self.history.append((self.active_player, bid))

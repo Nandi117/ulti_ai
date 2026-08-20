@@ -171,14 +171,6 @@ def compute_bid_bonus(total_eps):
     else:
         return 0.0
 
-def compute_force_exploration_rate(total_eps):
-    """Exploration curriculum: randomly force a bid (disable Passz) to discover bonuses."""
-    if total_eps < 100_000:
-        # Start at forcing a bid 80% of the time, decaying to 0
-        return 0.8 - (0.8 * (total_eps / 100_000))
-    else:
-        return 0.0
-
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Starting v2 Training: Public Belief + Autoregressive Talon + League + Reward Shaping on {device}...")
@@ -215,6 +207,8 @@ def train():
     
     # League Training: pool of frozen past selves
     league = League(max_snapshots=params.get("fictitious_play_history_size", 10))
+    league_path = r'C:\ulti_ai\models\league.pth'
+    league.load(league_path)
     league_prob = params.get("fictitious_play_prob", 0.2)
     league_opponent_decl = None
     league_opponent_def = None
@@ -386,15 +380,11 @@ def train():
                 writer.add_scalar("Reward/Declarer_Avg100", avg_decl, total_eps)
                 writer.add_scalar("Reward/Defender_Avg100", avg_def, total_eps)
                 writer.add_scalar("Curriculum/BidBonus", bid_bonus, total_eps)
-                writer.add_scalar("Curriculum/ForceExplorationRate", compute_force_exploration_rate(total_eps), total_eps)
                 writer.add_scalar("League/SnapshotCount", len(league), total_eps)
             
             # Reset episode
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
-            
-            force_rate = compute_force_exploration_rate(total_eps)
-            env.random_force_bid = random.random() < force_rate
             
             obs, info = env.reset()
             
@@ -408,8 +398,10 @@ def train():
                 league_opponent_def = None
             
             # === League: save snapshot periodically ===
-            if total_eps - last_league_snapshot_eps >= league_snapshot_interval:
+            # === League Saving ===
+            if total_eps > 0 and total_eps % 5000 == 0:
                 league.add_snapshot(declarer_agent, defender_agent)
+                league.save(r'C:\ulti_ai\models\league.pth')
                 last_league_snapshot_eps = total_eps
                 print(f"[League] Saved snapshot #{len(league)} at episode {total_eps}")
             

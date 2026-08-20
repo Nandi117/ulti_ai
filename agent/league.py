@@ -44,3 +44,13 @@ class League:
     
     def __len__(self) -> int:
         return len(self.snapshots)
+
+    def save(self, filepath: str):
+        """Save league to disk."""
+        torch.save(self.snapshots, filepath)
+
+    def load(self, filepath: str):
+        """Load league from disk."""
+        import os
+        if os.path.exists(filepath):
+            self.snapshots = torch.load(filepath, weights_only=False)

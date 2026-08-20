@@ -214,9 +214,7 @@ class UltiEnv(gym.Env):
         from engine.belief_tracker import BeliefTracker
         self.belief_tracker = BeliefTracker()
         self.belief_tracker.reset_deal(self.hands, starting_player=0)
-        
-        # Only force exploration on exceptional hands if we are in training filter mode
-        self.force_high_game = getattr(self, 'training_filter_mode', False)
+        self.must_bid_higher = False
         
         return self._get_obs(), self._get_info()
 
@@ -274,7 +272,7 @@ class UltiEnv(gym.Env):
                 
                 player_hand_ids = np.where(self.hands[self.current_player])[0]
                 player_cards = [ALL_CARDS[c_id] for c_id in player_hand_ids]
-                filtered_list = apply_hand_filter_to_mask(player_cards, bidding_mask, force_high_game=getattr(self, 'force_high_game', False))
+                filtered_list = apply_hand_filter_to_mask(player_cards, bidding_mask)
                 bidding_mask = np.array(filtered_list, dtype=np.int8)
                 
             if getattr(self, 'must_bid_higher', False):
@@ -324,23 +322,6 @@ class UltiEnv(gym.Env):
                 mask[42] = 1 # Bells
         else:
             playing_mask = get_action_mask(self.hands[self.current_player], self.trick)
-            
-            # Heuristic: Never play Trump VII in an Ulti game unless it's the only choice or last card
-            bid = self.auction.highest_bid
-            if bid and bid.has_ulti and self.current_player == self.auction.highest_bidder:
-                cards_in_hand = np.sum(self.hands[self.current_player])
-                if cards_in_hand > 1:
-                    from engine.trick import ALL_CARDS
-                    from engine.core import Rank
-                    trump_vii_idx = -1
-                    for idx, card in enumerate(ALL_CARDS):
-                        if card.suit == self.trump_suit and card.rank == Rank.SEVEN:
-                            trump_vii_idx = idx
-                            break
-                    if trump_vii_idx != -1 and playing_mask[trump_vii_idx]:
-                        playing_mask[trump_vii_idx] = 0
-                        if np.sum(playing_mask) == 0:
-                            playing_mask[trump_vii_idx] = 1 # Revert if forced to play it
                             
             mask[:32] = playing_mask
             

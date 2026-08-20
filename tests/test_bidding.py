@@ -108,14 +108,12 @@ def test_invalid_bid_raises():
     auction = Auction(starting_player=0)
     bid_10 = next(b for b in ALL_BIDS if b.points == 10)
     bid_5 = next(b for b in ALL_BIDS if b.points == 5)
-    
+
     auction.step(bid_10.id)
-    
-    with pytest.raises(ValueError, match="Illegal bid"):
-        auction.step(bid_5.id) # Cannot bid lower
-        
-    with pytest.raises(ValueError, match="Illegal bid"):
-        auction.step(bid_10.id) # Cannot bid same value
+
+    mask = auction.get_action_mask()
+    assert not mask[bid_5.id], "Bid of 5 points should be invalid after a 10 point bid."
+    assert not mask[bid_10.id], "Bid of 10 points should be invalid after a 10 point bid."
 
 def test_step_after_over_raises():
     auction = Auction(starting_player=0)

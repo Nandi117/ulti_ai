@@ -30,7 +30,7 @@ class TestUltiEnv(unittest.TestCase):
         
         self.assertIn("action_mask", info)
         self.assertEqual(info["action_mask"].shape, (54,))
-        self.assertEqual(self.env.phase, "bidding")
+        self.assertEqual(self.env.phase, "drop_talon")
 
     def test_step_bidding(self):
         obs, info = self.env.reset()

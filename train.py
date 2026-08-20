@@ -171,15 +171,6 @@ def compute_bid_bonus(total_eps):
     else:
         return 0.0
 
-
-def compute_force_exploration_rate(total_eps):
-    """Exploration curriculum: force rate decays linearly to 0."""
-    if total_eps < 300_000:
-        return 1.0 - (total_eps / 300_000)
-    else:
-        return 0.0
-
-
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Starting v2 Training: Public Belief + Autoregressive Talon + League + Reward Shaping on {device}...")
@@ -386,17 +377,11 @@ def train():
                 writer.add_scalar("Reward/Declarer_Avg100", avg_decl, total_eps)
                 writer.add_scalar("Reward/Defender_Avg100", avg_def, total_eps)
                 writer.add_scalar("Curriculum/BidBonus", bid_bonus, total_eps)
-                force_rate = compute_force_exploration_rate(total_eps)
-                writer.add_scalar("Curriculum/ForceExplorationRate", force_rate, total_eps)
                 writer.add_scalar("League/SnapshotCount", len(league), total_eps)
             
             # Reset episode
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
-            
-            # === Exploration Curriculum: update force rate ===
-            force_rate = compute_force_exploration_rate(total_eps)
-            env.force_high_game = (random.random() < force_rate) and env.training_filter_mode
             
             obs, info = env.reset()
             
@@ -471,7 +456,7 @@ def train():
                     }, f)
                     
             if time.time() - last_print > 5:
-                print(f"Step: {global_step} | Eps: {total_eps} | Bid Bonus: {compute_bid_bonus(total_eps):.2f} | Force Rate: {compute_force_exploration_rate(total_eps):.2f} | League: {len(league)} snapshots")
+                print(f"Step: {global_step} | Eps: {total_eps} | Bid Bonus: {compute_bid_bonus(total_eps):.2f} | League: {len(league)} snapshots")
                 for m in mode_eps.keys():
                     if mode_eps[m] > 0:
                         print(f"  {m} | WR: {mode_wins[m]/mode_eps[m]:.2f}")

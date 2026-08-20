@@ -165,9 +165,9 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
 def compute_bid_bonus(total_eps):
     """Reward shaping: bonus for bidding, decays linearly to 0."""
     if total_eps < 50_000:
-        return 1.0
+        return 1.5
     elif total_eps < 200_000:
-        return 1.0 - ((total_eps - 50_000) / 150_000)
+        return 1.5 - (1.5 * ((total_eps - 50_000) / 150_000))
     else:
         return 0.0
 
@@ -330,8 +330,9 @@ def train():
             bid = env.auction.highest_bid
             bonus = 0.0
             if bid is not None and bid.id != 0:
-                # Normalize: bid.points ranges from ~2 to 12, normalize to 0-1
-                bonus = bid_bonus * (bid.points / 12.0)
+                # Supercharged bonus: Flat multiplier on the bid's points
+                # E.g. Ulti (4 pts) * 1.5 bonus = +6.0 reward just for bidding!
+                bonus = bid_bonus * bid.points
             
             # === Process Declarer trajectories ===
             ep_decl_reward = 0.0

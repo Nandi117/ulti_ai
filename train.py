@@ -171,6 +171,14 @@ def compute_bid_bonus(total_eps):
     else:
         return 0.0
 
+def compute_force_exploration_rate(total_eps):
+    """Exploration curriculum: randomly force a bid (disable Passz) to discover bonuses."""
+    if total_eps < 100_000:
+        # Start at forcing a bid 80% of the time, decaying to 0
+        return 0.8 - (0.8 * (total_eps / 100_000))
+    else:
+        return 0.0
+
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Starting v2 Training: Public Belief + Autoregressive Talon + League + Reward Shaping on {device}...")
@@ -378,11 +386,15 @@ def train():
                 writer.add_scalar("Reward/Declarer_Avg100", avg_decl, total_eps)
                 writer.add_scalar("Reward/Defender_Avg100", avg_def, total_eps)
                 writer.add_scalar("Curriculum/BidBonus", bid_bonus, total_eps)
+                writer.add_scalar("Curriculum/ForceExplorationRate", compute_force_exploration_rate(total_eps), total_eps)
                 writer.add_scalar("League/SnapshotCount", len(league), total_eps)
             
             # Reset episode
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
+            
+            force_rate = compute_force_exploration_rate(total_eps)
+            env.random_force_bid = random.random() < force_rate
             
             obs, info = env.reset()
             

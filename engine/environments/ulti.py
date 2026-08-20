@@ -275,6 +275,12 @@ class UltiEnv(gym.Env):
                 filtered_list = apply_hand_filter_to_mask(player_cards, bidding_mask)
                 bidding_mask = np.array(filtered_list, dtype=np.int8)
                 
+                # Randomly force exploration by disabling Passz
+                if getattr(self, 'random_force_bid', False):
+                    bidding_mask[0] = 0
+                    if np.sum(bidding_mask) == 0:
+                        bidding_mask[0] = 1
+                
             if getattr(self, 'must_bid_higher', False):
                 bidding_mask[0] = 0 # No Passz after robbing
                 if np.sum(bidding_mask) == 0:

@@ -163,13 +163,26 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
 
 
 def compute_bid_bonus(total_eps):
-    """Reward shaping: bonus for bidding, decays linearly to 0."""
-    if total_eps < 200_000:
-        return 1.5
-    elif total_eps < 1_000_000:
-        return 1.5 - (1.5 * ((total_eps - 200_000) / 800_000))
+    """
+    Gold Rush mechanic removed! 
+    The agent now trains on true unadulterated points because it was pre-trained via Behavioral Cloning.
+    """
+    return 0.0
+
+
+def get_rigged_options(total_eps):
+    import random
+    if total_eps < 300_000:
+        prob = 1.0
+    elif total_eps < 500_000:
+        prob = 1.0 - ((total_eps - 300_000) / 200_000)
     else:
-        return 0.0
+        prob = 0.0
+        
+    if random.random() < prob:
+        forced_bid_id = random.choice([0, 2, 3, 4, 5, 6, 7, 8, 9])
+        return {"forced_bid_id": forced_bid_id}, True
+    return None, False
 
 def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -236,7 +249,8 @@ def train():
     league_snapshot_interval = 5000
     last_league_snapshot_eps = 0
     
-    obs, info = env.reset()
+        opt, is_rigged_episode = get_rigged_options(total_eps)
+    obs, info = env.reset(options=opt)
     episode_traj_decl = {0: [], 1: [], 2: []}
     episode_traj_def = {0: [], 1: [], 2: []}
     
@@ -294,11 +308,24 @@ def train():
             
         mask = info["action_mask"]
         
+        is_bidding = (env.phase == "bidding")
+        
         with torch.no_grad():
             action, logprob, entropy, value = active_agent.get_action_and_value(
                 obs, mode=nn_mode, action_mask=torch.tensor(mask, device=device)
             )
             action_item = action.item()
+            
+            if is_bidding and is_rigged_episode:
+                from engine.heuristic_bidder import OracleBidder
+                from phase1_supervised import bin_to_cards
+                p0 = bin_to_cards(env.hands[0])
+                p1 = bin_to_cards(env.hands[1])
+                p2 = bin_to_cards(env.hands[2])
+                oracle_bid = OracleBidder.get_best_bid(p0, p1, p2)
+                if mask[oracle_bid]:
+                    action_item = oracle_bid
+                    
             logprob_item = logprob.item()
             value_item = value.item()
         
@@ -306,10 +333,12 @@ def train():
         
         # Only store trajectories for the LEARNING agents (not league opponents)
         if not is_league_player:
-            if active_agent == declarer_agent:
-                episode_traj_decl[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
-            else:
-                episode_traj_def[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
+            skip_store = (is_bidding and is_rigged_episode)
+            if not skip_store:
+                if active_agent == declarer_agent:
+                    episode_traj_decl[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
+                else:
+                    episode_traj_def[current_player].append((obs, action_item, logprob_item, value_item, mask, nn_mode))
             
         obs = next_obs
         global_step += 1
@@ -389,7 +418,8 @@ def train():
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
             
-            obs, info = env.reset()
+                        opt, is_rigged_episode = get_rigged_options(total_eps)
+            obs, info = env.reset(options=opt)
             
             # === League: decide if next episode uses league opponents ===
             if league.has_opponents() and random.random() < league_prob:

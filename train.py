@@ -180,7 +180,7 @@ def get_rigged_options(total_eps):
         prob = 0.0
         
     if random.random() < prob:
-        forced_bid_id = random.choice([0, 2, 3, 4, 5, 6, 7, 8, 9])
+        forced_bid_id = random.choice([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
         return {"forced_bid_id": forced_bid_id}, True
     return None, False
 
@@ -249,7 +249,7 @@ def train():
     league_snapshot_interval = 5000
     last_league_snapshot_eps = 0
     
-        opt, is_rigged_episode = get_rigged_options(total_eps)
+    opt, is_rigged_episode = get_rigged_options(total_eps)
     obs, info = env.reset(options=opt)
     episode_traj_decl = {0: [], 1: [], 2: []}
     episode_traj_def = {0: [], 1: [], 2: []}
@@ -317,14 +317,13 @@ def train():
             action_item = action.item()
             
             if is_bidding and is_rigged_episode:
-                from engine.heuristic_bidder import OracleBidder
-                from phase1_supervised import bin_to_cards
-                p0 = bin_to_cards(env.hands[0])
-                p1 = bin_to_cards(env.hands[1])
-                p2 = bin_to_cards(env.hands[2])
-                oracle_bid = OracleBidder.get_best_bid(p0, p1, p2)
-                if mask[oracle_bid]:
-                    action_item = oracle_bid
+                if hasattr(env, 'forced_bid_id') and env.forced_bid_id is not None:
+                    if current_player == 0:
+                        if mask[env.forced_bid_id]:
+                            action_item = env.forced_bid_id
+                    else:
+                        if mask[0]: # Opponents must pass so P0 can practice the rigged hand
+                            action_item = 0
                     
             logprob_item = logprob.item()
             value_item = value.item()
@@ -418,7 +417,7 @@ def train():
             episode_traj_decl = {0: [], 1: [], 2: []}
             episode_traj_def = {0: [], 1: [], 2: []}
             
-                        opt, is_rigged_episode = get_rigged_options(total_eps)
+            opt, is_rigged_episode = get_rigged_options(total_eps)
             obs, info = env.reset(options=opt)
             
             # === League: decide if next episode uses league opponents ===

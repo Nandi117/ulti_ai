@@ -164,10 +164,10 @@ def update_agent(agent, optimizer, buffer, params, writer, global_step, prefix="
 
 def compute_bid_bonus(total_eps):
     """Reward shaping: bonus for bidding, decays linearly to 0."""
-    if total_eps < 50_000:
+    if total_eps < 200_000:
         return 1.5
-    elif total_eps < 200_000:
-        return 1.5 - (1.5 * ((total_eps - 50_000) / 150_000))
+    elif total_eps < 1_000_000:
+        return 1.5 - (1.5 * ((total_eps - 200_000) / 800_000))
     else:
         return 0.0
 
@@ -196,7 +196,10 @@ def train():
         print("No checkpoint found. Starting fresh training with v2 architecture.")
         
     opt_decl = optim.Adam(declarer_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
-    opt_def = optim.Adam(defender_agent.parameters(), lr=params["learning_rate"], eps=1e-5)
+    
+    # Asymmetric learning: Defender learns 10x slower so Declarer has room to experiment
+    defender_lr = params["learning_rate"] / 10.0
+    opt_def = optim.Adam(defender_agent.parameters(), lr=defender_lr, eps=1e-5)
     
     run_name = f"v2_league_{int(time.time())}"
     writer = SummaryWriter(f"logs/tb/{run_name}")
@@ -206,7 +209,7 @@ def train():
     buffer_def = ParallelReplayBuffer()
     
     # League Training: pool of frozen past selves
-    league = League(max_snapshots=params.get("fictitious_play_history_size", 10))
+    league = League(max_snapshots=20)
     league_path = r'C:\ulti_ai\models\league.pth'
     league.load(league_path)
     league_prob = params.get("fictitious_play_prob", 0.2)
@@ -399,7 +402,7 @@ def train():
             
             # === League: save snapshot periodically ===
             # === League Saving ===
-            if total_eps > 0 and total_eps % 5000 == 0:
+            if total_eps > 0 and total_eps % 50_000 == 0:
                 league.add_snapshot(declarer_agent, defender_agent)
                 league.save(r'C:\ulti_ai\models\league.pth')
                 last_league_snapshot_eps = total_eps
@@ -417,7 +420,9 @@ def train():
                 }, r'C:\ulti_ai\models\agent_checkpoint_split.pth')
                 
             if len(buffer_def) >= params["update_frequency"]:
-                update_agent(defender_agent, opt_def, buffer_def, params, writer, global_step, prefix="Defender")
+                # Phase 1 Curriculum: Freeze defender completely for first 50k games
+                if total_eps >= 50_000:
+                    update_agent(defender_agent, opt_def, buffer_def, params, writer, global_step, prefix="Defender")
                 buffer_def.reset()
                 
             # Dump JSON dashboard stats

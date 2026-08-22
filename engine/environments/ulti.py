@@ -187,6 +187,7 @@ class UltiEnv(gym.Env):
         else:
             deck.shuffle()
             forced_bid_id = options.get("forced_bid_id") if options else None
+            self.forced_bid_id = forced_bid_id
             if forced_bid_id is not None:
                 import random
                 from engine.core import Rank, Suit

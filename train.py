@@ -449,9 +449,7 @@ def train():
                 }, r'C:\ulti_ai\models\agent_checkpoint_split.pth')
                 
             if len(buffer_def) >= params["update_frequency"]:
-                # Phase 1 Curriculum: Freeze defender completely for first 50k games
-                if total_eps >= 50_000:
-                    update_agent(defender_agent, opt_def, buffer_def, params, writer, global_step, prefix="Defender")
+                update_agent(defender_agent, opt_def, buffer_def, params, writer, global_step, prefix="Defender")
                 buffer_def.reset()
                 
             # Dump JSON dashboard stats
